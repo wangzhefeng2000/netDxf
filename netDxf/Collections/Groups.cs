@@ -1,7 +1,7 @@
-#region netDxf library, Copyright (C) 2009-2017 Daniel Carvajal (haplokuon@gmail.com)
+#region netDxf library, Copyright (C) 2009-2018 Daniel Carvajal (haplokuon@gmail.com)
 
 //                        netDxf library
-// Copyright (C) 2009-2017 Daniel Carvajal (haplokuon@gmail.com)
+// Copyright (C) 2009-2018 Daniel Carvajal (haplokuon@gmail.com)
 // 
 // This library is free software; you can redistribute it and/or
 // modify it under the terms of the GNU Lesser General Public
@@ -31,23 +31,18 @@ namespace netDxf.Collections
     /// <summary>
     /// Represents a collection of groups.
     /// </summary>
-    /// <remarks>The Groups collection method GetReferences will always return an empty list since there are no DxfObjects that references them.</remarks>
     public sealed class Groups :
         TableObjects<Group>
     {
         #region constructor
 
-        internal Groups(DxfDocument document, string handle = null)
-            : this(document, 0, handle)
+        internal Groups(DxfDocument document)
+            : this(document, null)
         {
         }
 
-        internal Groups(DxfDocument document, int capacity, string handle = null)
-            : base(document,
-                new Dictionary<string, Group>(capacity, StringComparer.OrdinalIgnoreCase),
-                new Dictionary<string, List<DxfObject>>(capacity, StringComparer.OrdinalIgnoreCase),
-                DxfObjectCode.GroupDictionary,
-                handle)
+        internal Groups(DxfDocument document, string handle)
+            : base(document, DxfObjectCode.GroupDictionary, handle)
         {
             this.MaxCapacity = int.MaxValue;
         }
@@ -84,7 +79,6 @@ namespace netDxf.Collections
             if (assignHandle || string.IsNullOrEmpty(group.Handle))
                 this.Owner.NumHandles = group.AsignHandle(this.Owner.NumHandles);
 
-            this.Owner.AddedObjects.Add(group.Handle, group);
             this.list.Add(group.Name, group);
             this.references.Add(group.Name, new List<DxfObject>());
             foreach (EntityObject entity in group.Entities)
@@ -108,6 +102,8 @@ namespace netDxf.Collections
             group.NameChanged += this.Item_NameChanged;
             group.EntityAdded += this.Group_EntityAdded;
             group.EntityRemoved += this.Group_EntityRemoved;
+
+            this.Owner.AddedObjects.Add(group.Handle, group);
 
             return group;
         }

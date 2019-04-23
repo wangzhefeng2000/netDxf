@@ -1,7 +1,7 @@
-﻿#region netDxf library, Copyright (C) 2009-2017 Daniel Carvajal (haplokuon@gmail.com)
+﻿#region netDxf library, Copyright (C) 2009-2019 Daniel Carvajal (haplokuon@gmail.com)
 
 //                        netDxf library
-// Copyright (C) 2009-2017 Daniel Carvajal (haplokuon@gmail.com)
+// Copyright (C) 2009-2019 Daniel Carvajal (haplokuon@gmail.com)
 // 
 // This library is free software; you can redistribute it and/or
 // modify it under the terms of the GNU Lesser General Public
@@ -81,10 +81,18 @@ namespace netDxf
         /// <summary>
         /// Represents the smallest number used for comparison purposes.
         /// </summary>
+        /// <remarks>
+        /// The epsilon value must be a positive number greater than zero.
+        /// </remarks>
         public static double Epsilon
         {
             get { return epsilon; }
-            set { epsilon = value; }
+            set
+            {
+                if(value<=0.0)
+                    throw new ArgumentOutOfRangeException(nameof(value), value, "The epsilon value must be a positive number greater than zero.");
+                epsilon = value;
+            }
         }
 
         #endregion
@@ -295,6 +303,9 @@ namespace netDxf
         public static Matrix3 ArbitraryAxis(Vector3 zAxis)
         {
             zAxis.Normalize();
+
+            if (zAxis.Equals(Vector3.UnitZ)) return Matrix3.Identity;
+
             Vector3 wY = Vector3.UnitY;
             Vector3 wZ = Vector3.UnitZ;
             Vector3 aX;
@@ -399,7 +410,7 @@ namespace netDxf
         /// <param name="dir0">First line direction.</param>
         /// <param name="point1">Second line origin point.</param>
         /// <param name="dir1">Second line direction.</param>
-        /// <returns>The intersection point between the two line.</returns>
+        /// <returns>The intersection point between the two lines.</returns>
         /// <remarks>If the lines are parallel the method will return a <see cref="Vector2.NaN">Vector2.NaN</see>.</remarks>
         public static Vector2 FindIntersection(Vector2 point0, Vector2 dir0, Vector2 point1, Vector2 dir1)
         {
@@ -414,7 +425,7 @@ namespace netDxf
         /// <param name="point1">Second line origin point.</param>
         /// <param name="dir1">Second line direction.</param>
         /// <param name="threshold">Tolerance.</param>
-        /// <returns>The intersection point between the two line.</returns>
+        /// <returns>The intersection point between the two lines.</returns>
         /// <remarks>If the lines are parallel the method will return a <see cref="Vector2.NaN">Vector2.NaN</see>.</remarks>
         public static Vector2 FindIntersection(Vector2 point0, Vector2 dir0, Vector2 point1, Vector2 dir1, double threshold)
         {
@@ -438,6 +449,7 @@ namespace netDxf
         public static double NormalizeAngle(double angle)
         {
             double c = angle%360.0;
+            if (IsZero(c)) c = 0.0;
             if (c < 0)
                 return 360.0 + c;
             return c;

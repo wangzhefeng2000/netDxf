@@ -1,7 +1,7 @@
-#region netDxf library, Copyright (C) 2009-2016 Daniel Carvajal (haplokuon@gmail.com)
+#region netDxf library, Copyright (C) 2009-2019 Daniel Carvajal (haplokuon@gmail.com)
 
 //                        netDxf library
-// Copyright (C) 2009-2016 Daniel Carvajal (haplokuon@gmail.com)
+// Copyright (C) 2009-2019 Daniel Carvajal (haplokuon@gmail.com)
 // 
 // This library is free software; you can redistribute it and/or
 // modify it under the terms of the GNU Lesser General Public
@@ -21,6 +21,7 @@
 #endregion
 
 using System;
+using System.Collections.Generic;
 using netDxf.Tables;
 
 namespace netDxf.Entities
@@ -104,15 +105,18 @@ namespace netDxf.Entities
 
         private AttributeDefinition definition;
         private string tag;
-        private object value;
+        private object attValue;
         private TextStyle style;
         private Vector3 position;
         private AttributeFlags flags;
         private double height;
         private double widthFactor;
+        private double width;
         private double obliqueAngle;
         private double rotation;
         private TextAlignment alignment;
+        private bool isBackward;
+        private bool isUpsideDown;
 
         #endregion
 
@@ -127,16 +131,12 @@ namespace netDxf.Entities
         /// Initializes a new instance of the <c>Attribute</c> class.
         /// </summary>
         /// <param name="definition"><see cref="AttributeDefinition">Attribute definition</see>.</param>
-        /// <remarks>
-        /// Although the attribute entity could override values defined in its definition for simplicity the implementation has restricted this possibility.
-        /// </remarks>
         public Attribute(AttributeDefinition definition)
             : base(DxfObjectCode.Attribute)
         {
             if (definition == null)
                 throw new ArgumentNullException(nameof(definition));
 
-            //EntityObject properties
             this.color = definition.Color;
             this.layer = definition.Layer;
             this.linetype = definition.Linetype;
@@ -146,18 +146,20 @@ namespace netDxf.Entities
             this.isVisible = definition.IsVisible;
             this.normal = definition.Normal;
 
-            //Attribute definition properties
             this.definition = definition;
             this.tag = definition.Tag;
-            this.value = definition.Value;
+            this.attValue = definition.Value;
             this.style = definition.Style;
             this.position = definition.Position;
             this.flags = definition.Flags;
             this.height = definition.Height;
+            this.width = definition.Width;
             this.widthFactor = definition.WidthFactor;
             this.obliqueAngle = definition.ObliqueAngle;
             this.rotation = definition.Rotation;
             this.alignment = definition.Alignment;
+            this.isBackward = definition.IsBackward;
+            this.isUpsideDown = definition.IsUpsideDown;
         }
 
         #endregion
@@ -295,8 +297,12 @@ namespace netDxf.Entities
         }
 
         /// <summary>
-        /// Gets or sets the attribute text height.
+        /// Gets or sets the text height.
         /// </summary>
+        /// <remarks>
+        /// Valid values must be greater than zero. Default: 1.0.<br />
+        /// When Alignment.Aligned is used this value is not applicable, it will be automatically adjusted so the text will fit in the specified width.
+        /// </remarks>
         public double Height
         {
             get { return this.height; }
@@ -309,8 +315,27 @@ namespace netDxf.Entities
         }
 
         /// <summary>
-        /// Gets or sets the attribute text width factor.
+        /// Gets or sets the text width, only applicable for text Alignment.Fit and Alignment.Align.
         /// </summary>
+        /// <remarks>Valid values must be greater than zero. Default: 1.0.</remarks>
+        public double Width
+        {
+            get { return this.width; }
+            set
+            {
+                if (value <= 0)
+                    throw new ArgumentOutOfRangeException(nameof(value), value, "The Text width must be greater than zero.");
+                this.width = value;
+            }
+        }
+
+        /// <summary>
+        /// Gets or sets the width factor.
+        /// </summary>
+        /// <remarks>
+        /// Valid values range from 0.01 to 100. Default: 1.0.<br />
+        /// When Alignment.Fit is used this value is not applicable, it will be automatically adjusted so the text will fit in the specified width.
+        /// </remarks>
         public double WidthFactor
         {
             get { return this.widthFactor; }
@@ -342,8 +367,8 @@ namespace netDxf.Entities
         /// </summary>
         public object Value
         {
-            get { return this.value; }
-            set { this.value = value; }
+            get { return this.attValue; }
+            set { this.attValue = value; }
         }
 
         /// <summary>
@@ -399,6 +424,193 @@ namespace netDxf.Entities
             set { this.alignment = value; }
         }
 
+        /// <summary>
+        /// Gets or sets if the attribute text is backward (mirrored in X).
+        /// </summary>
+        public bool IsBackward
+        {
+            get { return this.isBackward; }
+            set { this.isBackward = value; }
+        }
+
+        /// <summary>
+        /// Gets or sets if the attribute text is upside down (mirrored in Y).
+        /// </summary>
+        public bool IsUpsideDown
+        {
+            get { return this.isUpsideDown; }
+            set { this.isUpsideDown = value; }
+        }
+
+        #endregion
+
+        #region public methods
+
+        /// <summary>
+        /// Moves, scales, and/or rotates the current attribute given a 3x3 transformation matrix and a translation vector.
+        /// </summary>
+        /// <param name="transformation">Transformation matrix.</param>
+        /// <param name="translation">Translation vector.</param>
+        public void TransformBy(Matrix3 transformation, Vector3 translation)
+        {
+            bool mirrText;
+            if (this.Owner == null)
+                mirrText = Text.DefaultMirrText;
+            else if(this.Owner.Owner == null)
+                mirrText = Text.DefaultMirrText;
+            else
+                mirrText = this.Owner.Owner.Record.Owner.Owner.DrawingVariables.MirrText;
+
+            Vector3 newPosition;
+            Vector3 newNormal;
+            Vector2 newUvector;
+            Vector2 newVvector;
+            double newWidthFactor;
+            double newHeight;
+            double newRotation;
+            double newObliqueAngle;
+
+            newPosition = transformation * this.Position + translation;
+            newNormal = transformation * this.Normal;
+
+            Matrix3 transOW = MathHelper.ArbitraryAxis(this.Normal);
+
+            Matrix3 transWO = MathHelper.ArbitraryAxis(newNormal);
+            transWO = transWO.Transpose();
+
+            IList<Vector2> uv = MathHelper.Transform(new List<Vector2>
+                {
+                    this.WidthFactor * this.Height * Vector2.UnitX,
+                    new Vector2(this.Height * Math.Tan(this.ObliqueAngle * MathHelper.DegToRad), this.Height)
+                },
+                this.Rotation * MathHelper.DegToRad,
+                CoordinateSystem.Object, CoordinateSystem.World);
+
+            Vector3 v;
+            v = transOW * new Vector3(uv[0].X, uv[0].Y, 0.0);
+            v = transformation * v;
+            v = transWO * v;
+            newUvector = new Vector2(v.X, v.Y);
+
+            v = transOW * new Vector3(uv[1].X, uv[1].Y, 0.0);
+            v = transformation * v;
+            v = transWO * v;
+            newVvector = new Vector2(v.X, v.Y);
+
+            newRotation = Vector2.Angle(newUvector) * MathHelper.RadToDeg;
+            newObliqueAngle = Vector2.Angle(newVvector) * MathHelper.RadToDeg;
+
+            if (mirrText)
+            {
+                if (Vector2.CrossProduct(newUvector, newVvector) < 0)
+                {
+                    newObliqueAngle = 90 - (newRotation - newObliqueAngle);
+                    if(!(this.Alignment == TextAlignment.Fit || this.Alignment == TextAlignment.Aligned)) newRotation += 180;
+                    this.IsBackward = !this.IsBackward;
+                }
+                else
+                {
+                    newObliqueAngle = 90 + (newRotation - newObliqueAngle);
+                }              
+            }
+            else
+            {
+                if (Vector2.CrossProduct(newUvector, newVvector) < 0.0)
+                {
+                    newObliqueAngle = 90 - (newRotation - newObliqueAngle);
+
+                    if (Vector2.DotProduct(newUvector, uv[0]) < 0.0)
+                    {
+                        newRotation += 180;
+
+                        switch (this.Alignment)
+                        {
+                            case TextAlignment.TopLeft:
+                                this.Alignment = TextAlignment.TopRight;
+                                break;
+                            case TextAlignment.TopRight:
+                                this.Alignment = TextAlignment.TopLeft;
+                                break;
+                            case TextAlignment.MiddleLeft:
+                                this.Alignment = TextAlignment.MiddleRight;
+                                break;
+                            case TextAlignment.MiddleRight:
+                                this.Alignment = TextAlignment.MiddleLeft;
+                                break;
+                            case TextAlignment.BaselineLeft:
+                                this.Alignment = TextAlignment.BaselineRight;
+                                break;
+                            case TextAlignment.BaselineRight:
+                                this.Alignment = TextAlignment.BaselineLeft;
+                                break;
+                            case TextAlignment.BottomLeft:
+                                this.Alignment = TextAlignment.BottomRight;
+                                break;
+                            case TextAlignment.BottomRight:
+                                this.Alignment = TextAlignment.BottomLeft;
+                                break;
+                        }
+                    }
+                    else
+                    {
+                        switch (this.Alignment)
+                        {
+                            case TextAlignment.TopLeft:
+                                this.Alignment = TextAlignment.BottomLeft;
+                                break;
+                            case TextAlignment.TopCenter:
+                                this.Alignment = TextAlignment.BottomCenter;
+                                break;
+                            case TextAlignment.TopRight:
+                                this.Alignment = TextAlignment.BottomRight;
+                                break;
+                            case TextAlignment.BottomLeft:
+                                this.Alignment = TextAlignment.TopLeft;
+                                break;
+                            case TextAlignment.BottomCenter:
+                                this.Alignment = TextAlignment.TopCenter;
+                                break;
+                            case TextAlignment.BottomRight:
+                                this.Alignment = TextAlignment.TopRight;
+                                break;
+                        }
+                    }
+                }
+                else
+                {
+                    newObliqueAngle = 90 + (newRotation - newObliqueAngle);
+                }
+            }
+
+            // the oblique angle is defined between -85 nad 85 degrees
+            //if (newObliqueAngle >= 360) newObliqueAngle -= 360;
+            newObliqueAngle = MathHelper.NormalizeAngle(newObliqueAngle);
+            if (newObliqueAngle > 180)
+                newObliqueAngle = 180 - newObliqueAngle;
+            if (newObliqueAngle < -85)
+                newObliqueAngle = -85;
+            else if (newObliqueAngle > 85)
+                newObliqueAngle = 85;
+
+            // the height must be greater than zero, the cos is always positive between -85 and 85
+            newHeight = newVvector.Modulus() * Math.Cos(newObliqueAngle * MathHelper.DegToRad);
+            newHeight = MathHelper.IsZero(newHeight) ? MathHelper.Epsilon : newHeight;
+
+            // the width factor is defined between 0.01 nad 100
+            newWidthFactor = newUvector.Modulus() / newHeight;
+            if(newWidthFactor<0.01)
+                newWidthFactor = 0.01;
+            else if (newWidthFactor > 100)
+                newWidthFactor = 100;
+
+            this.Position = newPosition;
+            this.Normal = newNormal;
+            this.Rotation = newRotation;
+            this.Height = newHeight;
+            this.WidthFactor = newWidthFactor;
+            this.ObliqueAngle = newObliqueAngle;
+        }
+
         #endregion
 
         #region overrides
@@ -411,7 +623,7 @@ namespace netDxf.Entities
         {
             Attribute entity = new Attribute
             {
-                //EntityObject properties
+                //Attribute properties
                 Layer = (Layer) this.Layer.Clone(),
                 Linetype = (Linetype) this.Linetype.Clone(),
                 Color = (AciColor) this.Color.Clone(),
@@ -420,18 +632,20 @@ namespace netDxf.Entities
                 LinetypeScale = this.LinetypeScale,
                 Normal = this.Normal,
                 IsVisible = this.isVisible,
-                //Attribute properties
-                Definition = (AttributeDefinition) this.definition.Clone(),
+                Definition = (AttributeDefinition) this.definition?.Clone(),
                 Tag = this.tag,
                 Height = this.height,
+                Width = this.width,
                 WidthFactor = this.widthFactor,
                 ObliqueAngle = this.obliqueAngle,
-                Value = this.value,
-                Style = this.style,
+                Value = this.attValue,
+                Style = (TextStyle) this.style.Clone(),
                 Position = this.position,
                 Flags = this.flags,
                 Rotation = this.rotation,
-                Alignment = this.alignment
+                Alignment = this.alignment,
+                IsBackward = this.isBackward,
+                IsUpsideDown = this.isUpsideDown
             };
 
             return entity;

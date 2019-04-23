@@ -1,7 +1,7 @@
-#region netDxf library, Copyright (C) 2009-2016 Daniel Carvajal (haplokuon@gmail.com)
+#region netDxf library, Copyright (C) 2009-2019 Daniel Carvajal (haplokuon@gmail.com)
 
 //                        netDxf library
-// Copyright (C) 2009-2016 Daniel Carvajal (haplokuon@gmail.com)
+// Copyright (C) 2009-2019 Daniel Carvajal (haplokuon@gmail.com)
 // 
 // This library is free software; you can redistribute it and/or
 // modify it under the terms of the GNU Lesser General Public
@@ -26,7 +26,6 @@ using System.Reflection;
 
 namespace netDxf
 {
-
     #region Class StringEnum
 
     /// <summary>
@@ -49,7 +48,7 @@ namespace netDxf
                 throw new ArgumentNullException(nameof(enumType));
 
             if (!enumType.IsEnum)
-                throw new ArgumentException(string.Format("Supplied type must be an Enum.  Type was {0}", enumType));
+                throw new ArgumentException(string.Format("The supplied type \"{0}\" must be an Enum.", enumType));
 
             this.enumType = enumType;
         }
@@ -62,15 +61,16 @@ namespace netDxf
         public string GetStringValue(string valueName)
         {
             string stringValue;
+
             try
             {
-                Enum type = (Enum) Enum.Parse(this.enumType, valueName);
+                Enum type = (Enum)Enum.Parse(this.enumType, valueName);
                 stringValue = GetStringValue(type);
             }
             catch
             {
                 return null;
-            } //Swallow!
+            }
 
             return stringValue;
         }
@@ -191,6 +191,19 @@ namespace netDxf
         /// </summary>
         /// <param name="type">Type.</param>
         /// <param name="value">String value.</param>
+        /// <param name="result">Enum value associated with the string value, or null if not found.</param>
+        /// <returns>True if an associated enum value has been found, false otherwise.</returns>
+        public static bool TryParse(Type type, string value, out object result)
+        {
+            result = Parse(type, value, StringComparison.Ordinal);
+            return result != null;
+        }
+
+        /// <summary>
+        /// Parses the supplied enum and string value to find an associated enum value (case sensitive).
+        /// </summary>
+        /// <param name="type">Type.</param>
+        /// <param name="value">String value.</param>
         /// <returns>Enum value associated with the string value, or null if not found.</returns>
         public static object Parse(Type type, string value)
         {
@@ -213,7 +226,7 @@ namespace netDxf
             string enumStringValue = null;
 
             if (!type.IsEnum)
-                throw new ArgumentException(string.Format("Supplied type must be an Enum.  Type was {0}", type));
+                throw new ArgumentException(string.Format("The supplied type \"{0}\" must be an Enum.", type));
 
             //Look for our string value associated with fields in this enum
             foreach (FieldInfo fi in type.GetFields())

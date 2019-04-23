@@ -1,7 +1,7 @@
-#region netDxf library, Copyright (C) 2009-2016 Daniel Carvajal (haplokuon@gmail.com)
+#region netDxf library, Copyright (C) 2009-2019 Daniel Carvajal (haplokuon@gmail.com)
 
 //                        netDxf library
-// Copyright (C) 2009-2016 Daniel Carvajal (haplokuon@gmail.com)
+// Copyright (C) 2009-2019 Daniel Carvajal (haplokuon@gmail.com)
 // 
 // This library is free software; you can redistribute it and/or
 // modify it under the terms of the GNU Lesser General Public
@@ -111,7 +111,7 @@ namespace netDxf.Objects
         /// <param name="name">MLine style name.</param>
         /// <remarks>By default the multiline style has to elements with offsets 0.5 y -0.5.</remarks>
         public MLineStyle(string name)
-            : this(name, new[] {new MLineStyleElement(0.5), new MLineStyleElement(-0.5)}, string.Empty)
+            : this(name, null, string.Empty)
         {
         }
 
@@ -122,7 +122,7 @@ namespace netDxf.Objects
         /// <param name="description">MLine style description.</param>
         /// <remarks>By default the multiline style has to elements with offsets 0.5 y -0.5.</remarks>
         public MLineStyle(string name, string description)
-            : this(name, new[] {new MLineStyleElement(0.5), new MLineStyleElement(-0.5)}, description)
+            : this(name, null, description)
         {
         }
 
@@ -130,7 +130,7 @@ namespace netDxf.Objects
         /// Initializes a new instance of the <c>MLineStyle</c> class.
         /// </summary>
         /// <param name="name">MLine style name.</param>
-        /// <param name="elements">Elements of the multiline.</param>
+        /// <param name="elements">Elements of the multiline, if null two default elements will be added.</param>
         public MLineStyle(string name, IEnumerable<MLineStyleElement> elements)
             : this(name, elements, string.Empty)
         {
@@ -140,32 +140,30 @@ namespace netDxf.Objects
         /// Initializes a new instance of the <c>MLineStyle</c> class.
         /// </summary>
         /// <param name="name">MLine style name.</param>
-        /// <param name="elements">Elements of the multiline.</param>
+        /// <param name="elements">Elements of the multiline, if null two default elements will be added.</param>
         /// <param name="description">MLine style description (optional).</param>
         public MLineStyle(string name, IEnumerable<MLineStyleElement> elements, string description)
             : base(name, DxfObjectCode.MLineStyle, true)
         {
             if (string.IsNullOrEmpty(name))
                 throw new ArgumentNullException(nameof(name), "The multiline style name should be at least one character long.");
-            if (elements == null)
-                throw new ArgumentNullException(nameof(elements));
-            this.elements = new ObservableCollection<MLineStyleElement>();
-
-            this.elements.BeforeAddItem += this.Elements_BeforeAddItem;
-            this.elements.AddItem += this.Elements_AddItem;
-            this.elements.BeforeRemoveItem += this.Elements_BeforeRemoveItem;
-            this.elements.RemoveItem += this.Elements_RemoveItem;
-
-            this.elements.AddRange(elements);
-            if (this.elements.Count < 1)
-                throw new ArgumentOutOfRangeException(nameof(elements), this.elements.Count, "The elements list must have at least one element.");
-            this.elements.Sort(); // the elements list must be ordered
 
             this.flags = MLineStyleFlags.None;
             this.description = string.IsNullOrEmpty(description) ? string.Empty : description;
             this.fillColor = AciColor.ByLayer;
             this.startAngle = 90.0;
             this.endAngle = 90.0;
+
+            this.elements = new ObservableCollection<MLineStyleElement>();
+            this.elements.BeforeAddItem += this.Elements_BeforeAddItem;
+            this.elements.AddItem += this.Elements_AddItem;
+            this.elements.BeforeRemoveItem += this.Elements_BeforeRemoveItem;
+            this.elements.RemoveItem += this.Elements_RemoveItem;
+            this.elements.AddRange(elements ?? new[] { new MLineStyleElement(0.5), new MLineStyleElement(-0.5) });
+            this.elements.Sort(); // the elements list must be ordered
+
+            if (this.elements.Count < 1)
+                throw new ArgumentOutOfRangeException(nameof(elements), this.elements.Count, "The elements list must have at least one element.");
         }
 
         #endregion
@@ -210,6 +208,7 @@ namespace netDxf.Objects
         /// <summary>
         /// Gets or sets the MLine start angle in degrees.
         /// </summary>
+        /// <remarks>Valid values range from 10.0 to 170.0 degrees. Default: 90.0.</remarks>
         public double StartAngle
         {
             get { return this.startAngle; }
@@ -224,6 +223,7 @@ namespace netDxf.Objects
         /// <summary>
         /// Gets or sets the MLine end angle in degrees.
         /// </summary>
+        /// <remarks>Valid values range from 10.0 to 170.0 degrees. Default: 90.0.</remarks>
         public double EndAngle
         {
             get { return this.endAngle; }
@@ -239,8 +239,10 @@ namespace netDxf.Objects
         /// Gets the list of elements that make up the multiline.
         /// </summary>
         /// <remarks>
-        /// The elements list must be ordered, this will be done automatically,
-        /// but if new elements are added individually to the list it will have to be sorted manually calling the Sort() method.
+        /// The elements list must be ordered from larger to smaller <see cref="MLineStyleElement.Offset">offset</see> values.
+        /// During the initialization process the list will be sorted automatically,
+        /// but if new elements are added individually to the list or the offset values of individual elements are modified,
+        /// it will have to be sorted manually calling the Sort() method.
         /// </remarks>
         public ObservableCollection<MLineStyleElement> Elements
         {
@@ -248,7 +250,7 @@ namespace netDxf.Objects
         }
 
         /// <summary>
-        /// Gets the owner of the actual dxf object.
+        /// Gets the owner of the actual multi line style.
         /// </summary>
         public new MLineStyles Owner
         {
@@ -269,10 +271,9 @@ namespace netDxf.Objects
         {
             List<MLineStyleElement> copyElements = new List<MLineStyleElement>();
             foreach (MLineStyleElement e in this.elements)
-            {
                 copyElements.Add((MLineStyleElement) e.Clone());
-            }
-            return new MLineStyle(newName, copyElements)
+
+            MLineStyle copy = new MLineStyle(newName, copyElements)
             {
                 Flags = this.flags,
                 Description = this.description,
@@ -280,6 +281,11 @@ namespace netDxf.Objects
                 StartAngle = this.startAngle,
                 EndAngle = this.endAngle,
             };
+
+            foreach (XData data in this.XData.Values)
+                copy.XData.Add((XData)data.Clone());
+
+            return copy;
         }
 
         /// <summary>

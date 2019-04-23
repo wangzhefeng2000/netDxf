@@ -1,7 +1,7 @@
-#region netDxf library, Copyright (C) 2009-2016 Daniel Carvajal (haplokuon@gmail.com)
+#region netDxf library, Copyright (C) 2009-2019 Daniel Carvajal (haplokuon@gmail.com)
 
 //                        netDxf library
-// Copyright (C) 2009-2016 Daniel Carvajal (haplokuon@gmail.com)
+// Copyright (C) 2009-2019 Daniel Carvajal (haplokuon@gmail.com)
 // 
 // This library is free software; you can redistribute it and/or
 // modify it under the terms of the GNU Lesser General Public
@@ -137,6 +137,7 @@ namespace netDxf.Objects
         /// </summary>
         /// <param name="other">An object to compare with this object.</param>
         /// <returns>
+        /// The MLineStyleElements are ordered from larger to smaller offset values.
         /// A 32-bit signed integer that indicates the relative order of the objects being compared.
         /// The return value has the following meanings: Value Meaning Less than zero This object is less than the other parameter.
         /// Zero This object is equal to other. Greater than zero This object is greater than other.
@@ -146,7 +147,7 @@ namespace netDxf.Objects
             if (other == null)
                 throw new ArgumentNullException(nameof(other));
 
-            return this.offset.CompareTo(other.offset);
+            return -this.offset.CompareTo(other.offset);
         }
 
         /// <summary>

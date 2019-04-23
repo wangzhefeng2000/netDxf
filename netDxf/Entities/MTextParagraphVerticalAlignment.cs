@@ -1,7 +1,7 @@
-﻿#region netDxf library, Copyright (C) 2009-2016 Daniel Carvajal (haplokuon@gmail.com)
+﻿#region netDxf library, Copyright (C) 2009-2018 Daniel Carvajal (haplokuon@gmail.com)
 
 //                        netDxf library
-// Copyright (C) 2009-2016 Daniel Carvajal (haplokuon@gmail.com)
+// Copyright (C) 2009-2018 Daniel Carvajal (haplokuon@gmail.com)
 // 
 // This library is free software; you can redistribute it and/or
 // modify it under the terms of the GNU Lesser General Public
@@ -23,33 +23,23 @@
 namespace netDxf.Entities
 {
     /// <summary>
-    /// Defines the vertical position of a leader with a text annotation.
+    /// Paragraph text vertical alignment.
     /// </summary>
-    public enum LeaderTextVerticalPosition
+    public enum MTextParagraphVerticalAlignment
     {
         /// <summary>
-        /// The text annotation is placed in the leader hook with respect of its alignment point.
+        /// Bottom.
         /// </summary>
-        Centered = 0,
+        Bottom = 0,
 
         /// <summary>
-        /// The text annotation is placed above the leader hook line.
+        /// Center.
         /// </summary>
-        Above = 1,
+        Center = 1,
 
         /// <summary>
-        /// This options seems to have no effect.
+        /// Top.
         /// </summary>
-        Outside = 2,
-
-        /// <summary>
-        /// This options seems to have no effect.
-        /// </summary>
-        JIS = 3,
-
-        /// <summary>
-        /// This options seems to have no effect.
-        /// </summary>
-        Bellow = 4
+        Top = 2
     }
 }

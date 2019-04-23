@@ -1,7 +1,7 @@
-#region netDxf library, Copyright (C) 2009-2016 Daniel Carvajal (haplokuon@gmail.com)
+#region netDxf library, Copyright (C) 2009-2018 Daniel Carvajal (haplokuon@gmail.com)
 
 //                        netDxf library
-// Copyright (C) 2009-2016 Daniel Carvajal (haplokuon@gmail.com)
+// Copyright (C) 2009-2018 Daniel Carvajal (haplokuon@gmail.com)
 // 
 // This library is free software; you can redistribute it and/or
 // modify it under the terms of the GNU Lesser General Public
@@ -23,6 +23,7 @@
 using System;
 using netDxf.Collections;
 using netDxf.Objects;
+using netDxf.Tables;
 using netDxf.Units;
 
 namespace netDxf.Blocks
@@ -31,8 +32,35 @@ namespace netDxf.Blocks
     /// Represent the record of a block in the tables section.
     /// </summary>
     public class BlockRecord :
-        DxfObject
+        DxfObject,
+        IHasXData
     {
+        #region delegates and events
+
+        //public delegate void XDataAddAppRegEventHandler(EntityObject sender, ObservableCollectionEventArgs<ApplicationRegistry> e);
+
+        public event XDataAddAppRegEventHandler XDataAddAppReg;
+
+        protected virtual void OnXDataAddAppRegEvent(ApplicationRegistry item)
+        {
+            XDataAddAppRegEventHandler ae = this.XDataAddAppReg;
+            if (ae != null)
+                ae(this, new ObservableCollectionEventArgs<ApplicationRegistry>(item));
+        }
+
+        //public delegate void XDataRemoveAppRegEventHandler(EntityObject sender, ObservableCollectionEventArgs<ApplicationRegistry> e);
+
+        public event XDataRemoveAppRegEventHandler XDataRemoveAppReg;
+
+        protected virtual void OnXDataRemoveAppRegEvent(ApplicationRegistry item)
+        {
+            XDataRemoveAppRegEventHandler ae = this.XDataRemoveAppReg;
+            if (ae != null)
+                ae(this, new ObservableCollectionEventArgs<ApplicationRegistry>(item));
+        }
+
+        #endregion
+
         #region private fields
 
         private string name;
@@ -51,7 +79,7 @@ namespace netDxf.Blocks
         /// Initializes a new instance of the <c>BlockRecord</c> class.
         /// </summary>
         /// <param name="name">Block definition name.</param>
-        public BlockRecord(string name)
+        internal BlockRecord(string name)
             : base(DxfObjectCode.BlockRecord)
         {
             if (string.IsNullOrEmpty(name))
@@ -145,7 +173,9 @@ namespace netDxf.Blocks
         /// <summary>
         /// Gets if the block record is for internal use only.
         /// </summary>
-        /// <remarks>All blocks which name starts with "*" are for internal use and should not be modified.</remarks>
+        /// <remarks>
+        /// All blocks which name starts with "*" are for internal use and should not be modified.
+        /// </remarks>
         public bool IsForInternalUseOnly
         {
             get { return this.name.StartsWith("*"); }

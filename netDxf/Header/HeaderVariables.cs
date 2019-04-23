@@ -1,7 +1,7 @@
-﻿#region netDxf library, Copyright (C) 2009-2017 Daniel Carvajal (haplokuon@gmail.com)
+﻿#region netDxf library, Copyright (C) 2009-2018 Daniel Carvajal (haplokuon@gmail.com)
 
 //                        netDxf library
-// Copyright (C) 2009-2017 Daniel Carvajal (haplokuon@gmail.com)
+// Copyright (C) 2009-2018 Daniel Carvajal (haplokuon@gmail.com)
 // 
 // This library is free software; you can redistribute it and/or
 // modify it under the terms of the GNU Lesser General Public
@@ -70,10 +70,13 @@ namespace netDxf.Header
                 {HeaderVariableCode.CMLScale, new HeaderVariable(HeaderVariableCode.CMLScale, 20.0)},
                 {HeaderVariableCode.CMLStyle, new HeaderVariable(HeaderVariableCode.CMLStyle, "Standard")},
                 {HeaderVariableCode.DimStyle, new HeaderVariable(HeaderVariableCode.DimStyle, "Standard")},
+                {HeaderVariableCode.ExtMax, new HeaderVariable(HeaderVariableCode.ExtMax, Vector3.NaN)},
+                {HeaderVariableCode.ExtMin, new HeaderVariable(HeaderVariableCode.ExtMin, Vector3.NaN)},
                 {HeaderVariableCode.TextSize, new HeaderVariable(HeaderVariableCode.TextSize, 2.5)},
                 {HeaderVariableCode.TextStyle, new HeaderVariable(HeaderVariableCode.TextStyle, "Standard")},
                 {HeaderVariableCode.LUnits, new HeaderVariable(HeaderVariableCode.LUnits, LinearUnitType.Decimal)},
                 {HeaderVariableCode.LUprec, new HeaderVariable(HeaderVariableCode.LUprec, (short) 4)},
+                {HeaderVariableCode.MirrText, new HeaderVariable(HeaderVariableCode.MirrText, false)},
                 {HeaderVariableCode.Extnames, new HeaderVariable(HeaderVariableCode.Extnames, true)},
                 {HeaderVariableCode.InsBase, new HeaderVariable(HeaderVariableCode.InsBase, Vector3.Zero)},
                 {HeaderVariableCode.InsUnits, new HeaderVariable(HeaderVariableCode.InsUnits, DrawingUnits.Unitless)},
@@ -371,6 +374,32 @@ namespace netDxf.Header
         }
 
         /// <summary>
+        /// X, Y, and Z drawing extents upper-right corner (in WCS).
+        /// </summary>
+        /// <remarks>
+        /// This header variable is only useful for external dxfs that actually contains a value for this variable, otherwise it will be set to Vector3.NaN, by default.
+        /// In any case it will not be saved in the dxf.
+        /// </remarks>
+        public Vector3 ExtMax
+        {
+            get { return (Vector3) this.variables[HeaderVariableCode.ExtMax].Value; }
+            internal set { this.variables[HeaderVariableCode.ExtMax].Value = value; }
+        }
+
+        /// <summary>
+        /// X, Y, and Z drawing extents lower-left corner (in WCS).
+        /// </summary>
+        /// <remarks>
+        /// This header variable is only useful for external dxfs that actually contains a value for this variable, otherwise it will be set to Vector3.NaN, by default.
+        /// In any case it will not be saved in the dxf.
+        /// </remarks>
+        public Vector3 ExtMin
+        {
+            get { return (Vector3)this.variables[HeaderVariableCode.ExtMin].Value; }
+            internal set { this.variables[HeaderVariableCode.ExtMin].Value = value; }
+        }
+
+        /// <summary>
         /// Controls symbol table naming.
         /// </summary>
         /// <remarks>
@@ -455,6 +484,15 @@ namespace netDxf.Header
         {
             get { return (bool) this.variables[HeaderVariableCode.LwDisplay].Value; }
             set { this.variables[HeaderVariableCode.LwDisplay].Value = value; }
+        }
+
+        /// <summary>
+        /// Controls if the text will be mirrored during a symmetry.
+        /// </summary>
+        public bool MirrText
+        {
+            get { return (bool) this.variables[HeaderVariableCode.MirrText].Value; }
+            set { this.variables[HeaderVariableCode.MirrText].Value = value; }
         }
 
         /// <summary>

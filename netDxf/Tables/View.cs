@@ -1,7 +1,7 @@
-﻿#region netDxf library, Copyright (C) 2009-2016 Daniel Carvajal (haplokuon@gmail.com)
+﻿#region netDxf library, Copyright (C) 2009-2018 Daniel Carvajal (haplokuon@gmail.com)
 
 //                        netDxf library
-// Copyright (C) 2009-2016 Daniel Carvajal (haplokuon@gmail.com)
+// Copyright (C) 2009-2018 Daniel Carvajal (haplokuon@gmail.com)
 // 
 // This library is free software; you can redistribute it and/or
 // modify it under the terms of the GNU Lesser General Public
@@ -133,7 +133,7 @@ namespace netDxf.Tables
         }
 
         /// <summary>
-        /// Gets the owner of the actual dxf object.
+        /// Gets the owner of the actual view.
         /// </summary>
         public new Views Owner
         {
@@ -152,7 +152,7 @@ namespace netDxf.Tables
         /// <returns>A new View that is a copy of this instance.</returns>
         public override TableObject Clone(string newName)
         {
-            return new View(newName)
+            View copy = new View(newName)
             {
                 Target = this.target,
                 Camera = this.camera,
@@ -164,6 +164,11 @@ namespace netDxf.Tables
                 FrontClippingPlane = this.frontClippingPlane,
                 BackClippingPlane = this.backClippingPlane
             };
+
+            foreach (XData data in this.XData.Values)
+                copy.XData.Add((XData)data.Clone());
+
+            return copy;
         }
 
         /// <summary>

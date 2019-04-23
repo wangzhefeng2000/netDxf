@@ -1,7 +1,7 @@
-#region netDxf library, Copyright (C) 2009-2016 Daniel Carvajal (haplokuon@gmail.com)
+#region netDxf library, Copyright (C) 2009-2018 Daniel Carvajal (haplokuon@gmail.com)
 
 //                        netDxf library
-// Copyright (C) 2009-2016 Daniel Carvajal (haplokuon@gmail.com)
+// Copyright (C) 2009-2018 Daniel Carvajal (haplokuon@gmail.com)
 // 
 // This library is free software; you can redistribute it and/or
 // modify it under the terms of the GNU Lesser General Public
@@ -35,17 +35,13 @@ namespace netDxf.Collections
     {
         #region constructor
 
-        internal UCSs(DxfDocument document, string handle = null)
-            : this(document, 0, handle)
+        internal UCSs(DxfDocument document)
+            : this(document, null)
         {
         }
 
-        internal UCSs(DxfDocument document, int capacity, string handle = null)
-            : base(document,
-                new Dictionary<string, UCS>(capacity, StringComparer.OrdinalIgnoreCase),
-                new Dictionary<string, List<DxfObject>>(capacity, StringComparer.OrdinalIgnoreCase),
-                DxfObjectCode.UcsTable,
-                handle)
+        internal UCSs(DxfDocument document, string handle)
+            : base(document, DxfObjectCode.UcsTable, handle)
         {
             this.MaxCapacity = short.MaxValue;
         }
@@ -77,13 +73,14 @@ namespace netDxf.Collections
             if (assignHandle || string.IsNullOrEmpty(ucs.Handle))
                 this.Owner.NumHandles = ucs.AsignHandle(this.Owner.NumHandles);
 
-            this.Owner.AddedObjects.Add(ucs.Handle, ucs);
             this.list.Add(ucs.Name, ucs);
             this.references.Add(ucs.Name, new List<DxfObject>());
 
             ucs.Owner = this;
 
             ucs.NameChanged += this.Item_NameChanged;
+
+            this.Owner.AddedObjects.Add(ucs.Handle, ucs);
 
             return ucs;
         }

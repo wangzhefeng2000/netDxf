@@ -1,7 +1,7 @@
-#region netDxf library, Copyright (C) 2009-2016 Daniel Carvajal (haplokuon@gmail.com)
+#region netDxf library, Copyright (C) 2009-2018 Daniel Carvajal (haplokuon@gmail.com)
 
 //                        netDxf library
-// Copyright (C) 2009-2016 Daniel Carvajal (haplokuon@gmail.com)
+// Copyright (C) 2009-2018 Daniel Carvajal (haplokuon@gmail.com)
 // 
 // This library is free software; you can redistribute it and/or
 // modify it under the terms of the GNU Lesser General Public
@@ -34,20 +34,15 @@ namespace netDxf.Collections
     public sealed class BlockRecords :
         TableObjects<Block>
     {
-
         #region constructor
 
-        internal BlockRecords(DxfDocument document, string handle = null)
-            : this(document, 0, handle)
+        internal BlockRecords(DxfDocument document)
+            : this(document, null)
         {
         }
 
-        internal BlockRecords(DxfDocument document, int capacity, string handle = null)
-            : base(document,
-                new Dictionary<string, Block>(capacity, StringComparer.OrdinalIgnoreCase),
-                new Dictionary<string, List<DxfObject>>(capacity, StringComparer.OrdinalIgnoreCase),
-                DxfObjectCode.BlockRecordTable,
-                handle)
+        internal BlockRecords(DxfDocument document, string handle)
+            : base(document, DxfObjectCode.BlockRecordTable, handle)
         {
             this.MaxCapacity = short.MaxValue;
         }
@@ -69,6 +64,7 @@ namespace netDxf.Collections
         {
             if (this.list.Count >= this.MaxCapacity)
                 throw new OverflowException(string.Format("Table overflow. The maximum number of elements the table {0} can have is {1}", this.CodeName, this.MaxCapacity));
+
             if (block == null)
                 throw new ArgumentNullException(nameof(block));
 
@@ -79,9 +75,6 @@ namespace netDxf.Collections
             if (assignHandle || string.IsNullOrEmpty(block.Handle))
                 this.Owner.NumHandles = block.AsignHandle(this.Owner.NumHandles);
 
-            this.Owner.AddedObjects.Add(block.Handle, block);
-            this.Owner.AddedObjects.Add(block.Owner.Handle, block.Owner);
-
             this.list.Add(block.Name, block);
             this.references.Add(block.Name, new List<DxfObject>());
 
@@ -90,15 +83,11 @@ namespace netDxf.Collections
 
             //for new block definitions configure its entities
             foreach (EntityObject entity in block.Entities)
-            {
-                this.Owner.AddEntity(entity, true, assignHandle);
-            }
+                this.Owner.AddEntityToDocument(entity, block, assignHandle);
 
             //for new block definitions configure its attributes
             foreach (AttributeDefinition attDef in block.AttributeDefinitions.Values)
-            {
-                this.Owner.AddEntity(attDef, true, assignHandle);
-            }
+                this.Owner.AddAttributeDefinitionToDocument(attDef, assignHandle);
 
             block.Record.Owner = this;
 
@@ -106,8 +95,11 @@ namespace netDxf.Collections
             block.LayerChanged += this.Block_LayerChanged;
             block.EntityAdded += this.Block_EntityAdded;
             block.EntityRemoved += this.Block_EntityRemoved;
-            block.AttributeDefinitionAdded += this.Block_EntityAdded;
-            block.AttributeDefinitionRemoved += this.Block_EntityRemoved;
+            block.AttributeDefinitionAdded += this.Block_AttributeDefinitionAdded; 
+            block.AttributeDefinitionRemoved += this.Block_AttributeDefinitionRemoved;
+
+            this.Owner.AddedObjects.Add(block.Handle, block);
+            this.Owner.AddedObjects.Add(block.Owner.Handle, block.Owner);
 
             return block;
         }
@@ -148,15 +140,11 @@ namespace netDxf.Collections
 
             // we will remove all entities from the block definition
             foreach (EntityObject entity in item.Entities)
-            {
-                this.Owner.RemoveEntity(entity, true);
-            }
+                this.Owner.RemoveEntityFromDocument(entity);
 
             // remove all attribute definitions from the associated layers
             foreach (AttributeDefinition attDef in item.AttributeDefinitions.Values)
-            {
-                this.Owner.RemoveEntity(attDef, true);
-            }
+                this.Owner.RemoveAttributeDefinitionFromDocument(attDef);
 
             this.Owner.AddedObjects.Remove(item.Handle);
             this.references.Remove(item.Name);
@@ -172,8 +160,8 @@ namespace netDxf.Collections
             item.LayerChanged -= this.Block_LayerChanged;
             item.EntityAdded -= this.Block_EntityAdded;
             item.EntityRemoved -= this.Block_EntityRemoved;
-            item.AttributeDefinitionAdded -= this.Block_EntityAdded;
-            item.AttributeDefinitionRemoved -= this.Block_EntityRemoved;
+            item.AttributeDefinitionAdded -= this.Block_AttributeDefinitionAdded;
+            item.AttributeDefinitionRemoved -= this.Block_AttributeDefinitionRemoved;
 
             return true;
         }
@@ -218,12 +206,35 @@ namespace netDxf.Collections
                 // we will exchange the owner of the entity
                 this.Owner.RemoveEntity(e.Item);
             }
-            this.Owner.AddEntity(e.Item, true, string.IsNullOrEmpty(e.Item.Handle));
+            this.Owner.AddEntityToDocument(e.Item, (Block) sender, string.IsNullOrEmpty(e.Item.Handle));
         }
 
         private void Block_EntityRemoved(TableObject sender, BlockEntityChangeEventArgs e)
         {
-            this.Owner.RemoveEntity(e.Item, true);
+            this.Owner.RemoveEntityFromDocument(e.Item);
+        }
+
+        private void Block_AttributeDefinitionAdded(Block sender, BlockAttributeDefinitionChangeEventArgs e)
+        {
+            if (e.Item.Owner != null)
+            {
+                // the block and its entities must belong to the same document
+                if (!ReferenceEquals(e.Item.Owner.Record.Owner.Owner, this.Owner))
+                    throw new ArgumentException("The block and the entity must belong to the same document. Clone it instead.");
+
+                // the entity cannot belong to another block
+                if (e.Item.Owner.Record.Layout == null)
+                    throw new ArgumentException("The entity cannot belong to another block. Clone it instead.");
+
+                // we will exchange the owner of the entity
+                this.Owner.RemoveAttributeDefinitionFromDocument(e.Item);
+            }
+            this.Owner.AddAttributeDefinitionToDocument(e.Item, string.IsNullOrEmpty(e.Item.Handle));
+        }
+
+        private void Block_AttributeDefinitionRemoved(Block sender, BlockAttributeDefinitionChangeEventArgs e)
+        {
+            this.Owner.RemoveAttributeDefinitionFromDocument(e.Item);
         }
 
         #endregion

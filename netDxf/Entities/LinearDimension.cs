@@ -1,7 +1,7 @@
-﻿#region netDxf library, Copyright (C) 2009-2016 Daniel Carvajal (haplokuon@gmail.com)
+﻿#region netDxf library, Copyright (C) 2009-2019 Daniel Carvajal (haplokuon@gmail.com)
 
 //                        netDxf library
-// Copyright (C) 2009-2016 Daniel Carvajal (haplokuon@gmail.com)
+// Copyright (C) 2009-2019 Daniel Carvajal (haplokuon@gmail.com)
 // 
 // This library is free software; you can redistribute it and/or
 // modify it under the terms of the GNU Lesser General Public
@@ -21,6 +21,7 @@
 #endregion
 
 using System;
+using System.Collections.Generic;
 using netDxf.Blocks;
 using netDxf.Tables;
 
@@ -104,11 +105,13 @@ namespace netDxf.Entities
             if (referenceLine == null)
                 throw new ArgumentNullException(nameof(referenceLine));
 
-            Vector3 ocsPoint;
-            ocsPoint = MathHelper.Transform(referenceLine.StartPoint, normal, CoordinateSystem.World, CoordinateSystem.Object);
-            this.firstRefPoint = new Vector2(ocsPoint.X, ocsPoint.Y);
-            ocsPoint = MathHelper.Transform(referenceLine.EndPoint, normal, CoordinateSystem.World, CoordinateSystem.Object);
-            this.secondRefPoint = new Vector2(ocsPoint.X, ocsPoint.Y);
+            IList<Vector3> ocsPoints = MathHelper.Transform(
+                new List<Vector3> {referenceLine.StartPoint, referenceLine.EndPoint}, normal, CoordinateSystem.World, CoordinateSystem.Object);
+            this.firstRefPoint = new Vector2(ocsPoints[0].X, ocsPoints[0].Y);
+            this.secondRefPoint = new Vector2(ocsPoints[1].X, ocsPoints[1].Y);
+
+            if (offset < 0)
+                throw new ArgumentOutOfRangeException(nameof(offset), "The offset value must be equal or greater than zero.");
             this.offset = offset;
             this.rotation = MathHelper.NormalizeAngle(rotation);
 
@@ -116,7 +119,8 @@ namespace netDxf.Entities
                 throw new ArgumentNullException(nameof(style));
             this.Style = style;
             this.Normal = normal;
-            this.Elevation = ocsPoint.Z;
+            this.Elevation = ocsPoints[0].Z;
+            this.Update();
         }
 
         /// <summary>
@@ -146,11 +150,14 @@ namespace netDxf.Entities
         {
             this.firstRefPoint = firstPoint;
             this.secondRefPoint = secondPoint;
+            if (offset < 0)
+                throw new ArgumentOutOfRangeException(nameof(offset), "The offset value must be equal or greater than zero.");
             this.offset = offset;
             this.rotation = MathHelper.NormalizeAngle(rotation);
             if (style == null)
                 throw new ArgumentNullException(nameof(style));
             this.Style = style;
+            this.Update();
         }
 
         #endregion
@@ -176,6 +183,14 @@ namespace netDxf.Entities
         }
 
         /// <summary>
+        /// Gets the location of the dimension line.
+        /// </summary>
+        public Vector2 DimLinePosition
+        {
+            get { return this.defPoint; }
+        }
+
+        /// <summary>
         /// Gets or sets the rotation of the dimension line.
         /// </summary>
         public double Rotation
@@ -187,10 +202,19 @@ namespace netDxf.Entities
         /// <summary>
         /// Gets or sets the distance between the mid point of the reference line and the dimension line.
         /// </summary>
+        /// <remarks>
+        /// The offset value must be equal or greater than zero.<br />
+        /// The side at which the dimension line is drawn depends of its rotation.
+        /// </remarks>
         public double Offset
         {
             get { return this.offset; }
-            set { this.offset = value; }
+            set
+            {
+                if (value < 0)
+                    throw new ArgumentOutOfRangeException(nameof(value), "The offset value must be equal or greater than zero.");
+                this.offset = value;
+            }
         }
 
         /// <summary>
@@ -216,18 +240,52 @@ namespace netDxf.Entities
         /// <param name="point">Point along the dimension line.</param>
         public void SetDimensionLinePosition(Vector2 point)
         {
-            Vector2 midRef = Vector2.MidPoint(this.firstRefPoint, this.secondRefPoint);
-            double dimRotation = this.rotation*MathHelper.DegToRad;
-            Vector2 dimDir = new Vector2(Math.Cos(dimRotation), Math.Sin(dimRotation));
+            Vector2 ref1 = this.firstRefPoint;
+            Vector2 ref2 = this.secondRefPoint;
+            Vector2 midRef = Vector2.MidPoint(ref1, ref2);
+
             Vector2 refDir = Vector2.Normalize(this.secondRefPoint - this.firstRefPoint);
-            Vector2 offsetDir = point - this.firstRefPoint;
-            double cross = Vector2.CrossProduct(refDir, offsetDir);
-            this.offset = MathHelper.PointLineDistance(midRef, point, dimDir);
+            double dimRotation = this.rotation * MathHelper.DegToRad;
+            Vector2 dimDir = new Vector2(Math.Cos(dimRotation), Math.Sin(dimRotation));
+            
+            double cross = Vector2.CrossProduct(refDir, point - this.firstRefPoint);
             if (cross < 0)
-                this.offset *= -1;
-            double relativeAngle = Vector2.AngleBetween(refDir, dimDir);
-            if (relativeAngle > MathHelper.HalfPI && relativeAngle <= MathHelper.ThreeHalfPI)
-                this.offset *= -1;
+            {
+                Vector2 tmp = this.firstRefPoint;
+                this.firstRefPoint = this.secondRefPoint;
+                this.secondRefPoint = tmp;
+                this.Rotation += 180;
+                dimRotation = this.rotation*MathHelper.DegToRad;
+            }
+
+            this.offset = MathHelper.PointLineDistance(midRef, point, dimDir);
+
+            Vector2 offsetDir = Vector2.Rotate(Vector2.UnitY, dimRotation);
+            Vector2 midDimLine = midRef + this.offset* offsetDir;
+
+            this.defPoint = midDimLine - this.Measurement * 0.5 * Vector2.Perpendicular(Vector2.Normalize(offsetDir));
+
+            if (!this.TextPositionManuallySet)
+            {
+                DimensionStyleOverride styleOverride;
+                double textGap = this.Style.TextOffset;
+                if (this.StyleOverrides.TryGetValue(DimensionStyleOverrideType.TextOffset, out styleOverride))
+                {
+                    textGap = (double)styleOverride.Value;
+                }
+                double scale = this.Style.DimScaleOverall;
+                if (this.StyleOverrides.TryGetValue(DimensionStyleOverrideType.DimScaleOverall, out styleOverride))
+                {
+                    scale = (double)styleOverride.Value;
+                }
+
+                double gap = textGap * scale;
+                if (dimRotation > MathHelper.HalfPI && dimRotation <= MathHelper.ThreeHalfPI)
+                {
+                    gap = -gap;
+                }
+                this.textRefPoint = midDimLine + gap * offsetDir;
+            }
         }
 
         #endregion
@@ -235,11 +293,129 @@ namespace netDxf.Entities
         #region overrides
 
         /// <summary>
+        /// Moves, scales, and/or rotates the current entity given a 3x3 transformation matrix and a translation vector.
+        /// </summary>
+        /// <param name="transformation">Transformation matrix.</param>
+        /// <param name="translation">Translation vector.</param>
+        public override void TransformBy(Matrix3 transformation, Vector3 translation)
+        {
+            Vector2 newStart;
+            Vector2 newEnd;
+            Vector3 newNormal;
+            double newElevation;
+            double newRotation;
+
+            newNormal = transformation * this.Normal;
+
+            Matrix3 transOW = MathHelper.ArbitraryAxis(this.Normal);
+            Matrix3 transWO = MathHelper.ArbitraryAxis(newNormal).Transpose();
+
+            Vector3 v;
+
+            v = transOW * new Vector3(this.FirstReferencePoint.X, this.FirstReferencePoint.Y, this.Elevation);
+            v = transformation * v + translation;
+            v = transWO * v;
+            newStart = new Vector2(v.X, v.Y);
+            newElevation = v.Z;
+
+            v = transOW * new Vector3(this.SecondReferencePoint.X, this.SecondReferencePoint.Y, this.Elevation);
+            v = transformation * v + translation;
+            v = transWO * v;
+            newEnd = new Vector2(v.X, v.Y);
+
+            if (this.TextPositionManuallySet)
+            {
+                v = transOW * new Vector3(this.textRefPoint.X, this.textRefPoint.Y, this.Elevation);
+                v = transformation * v + translation;
+                v = transWO * v;
+                this.textRefPoint = new Vector2(v.X, v.Y);
+            }
+
+            v = transOW * new Vector3(this.defPoint.X, this.defPoint.Y, this.Elevation);
+            v = transformation * v + translation;
+            v = transWO * v;
+            this.defPoint = new Vector2(v.X, v.Y);
+
+            Vector2 refAxis = Vector2.Rotate(Vector2.UnitX, this.Rotation * MathHelper.DegToRad);
+            v = transOW * new Vector3(refAxis.X, refAxis.Y, this.Elevation);
+            v = transformation * v;
+            v = transWO * v;
+            Vector2 axis = new Vector2(v.X, v.Y);
+            newRotation = Vector2.Angle(axis) * MathHelper.RadToDeg;
+
+            this.Rotation = newRotation;
+            this.FirstReferencePoint = newStart;
+            this.SecondReferencePoint = newEnd;
+            this.Elevation = newElevation;
+            this.Normal = newNormal;
+
+            this.SetDimensionLinePosition(this.defPoint);
+        }
+
+
+        /// <summary>
+        /// Calculate the dimension reference points.
+        /// </summary>
+        protected override void CalculteReferencePoints()
+        {
+            DimensionStyleOverride styleOverride;
+
+            double measure = this.Measurement;
+            Vector2 ref1 = this.firstRefPoint;
+            Vector2 ref2 = this.secondRefPoint;
+            Vector2 midRef = Vector2.MidPoint(ref1, ref2);
+            double dimRotation = this.Rotation * MathHelper.DegToRad;
+
+            Vector2 vec = Vector2.Normalize(Vector2.Rotate(Vector2.UnitY, dimRotation));
+            Vector2 midDimLine = midRef + this.offset * vec;
+            double cross = Vector2.CrossProduct(ref2 - ref1, vec);
+            if (cross < 0)
+            {
+                this.firstRefPoint = ref2;
+                this.secondRefPoint = ref1;
+            }
+            this.defPoint = midDimLine - measure * 0.5 * Vector2.Perpendicular(vec);
+
+            if (this.TextPositionManuallySet)
+            {
+                DimensionStyleFitTextMove moveText = this.Style.FitTextMove;
+                if (this.StyleOverrides.TryGetValue(DimensionStyleOverrideType.FitTextMove, out styleOverride))
+                {
+                    moveText = (DimensionStyleFitTextMove)styleOverride.Value;
+                }
+
+                if (moveText == DimensionStyleFitTextMove.BesideDimLine)
+                {
+                    this.SetDimensionLinePosition(this.textRefPoint);
+                }
+            }
+            else
+            {
+                double textGap = this.Style.TextOffset;
+                if (this.StyleOverrides.TryGetValue(DimensionStyleOverrideType.TextOffset, out styleOverride))
+                {
+                    textGap = (double)styleOverride.Value;
+                }
+                double scale = this.Style.DimScaleOverall;
+                if (this.StyleOverrides.TryGetValue(DimensionStyleOverrideType.DimScaleOverall, out styleOverride))
+                {
+                    scale = (double)styleOverride.Value;
+                }
+
+                double gap = textGap * scale;
+                if (dimRotation > MathHelper.HalfPI && dimRotation <= MathHelper.ThreeHalfPI)
+                    gap = -gap;
+
+                this.textRefPoint = midDimLine + gap * vec;
+            }
+        }
+
+        /// <summary>
         /// Gets the block that contains the entities that make up the dimension picture.
         /// </summary>
         /// <param name="name">Name to be assigned to the generated block.</param>
         /// <returns>The block that represents the actual dimension.</returns>
-        internal override Block BuildBlock(string name)
+        protected override Block BuildBlock(string name)
         {
             return DimensionBlock.Build(this, name);
         }
@@ -263,6 +439,10 @@ namespace netDxf.Entities
                 IsVisible = this.IsVisible,
                 //Dimension properties
                 Style = (DimensionStyle) this.Style.Clone(),
+                DefinitionPoint = this.DefinitionPoint,
+                TextReferencePoint = this.TextReferencePoint,
+                TextPositionManuallySet = this.TextPositionManuallySet,
+                TextRotation = this.TextRotation,
                 AttachmentPoint = this.AttachmentPoint,
                 LineSpacingStyle = this.LineSpacingStyle,
                 LineSpacingFactor = this.LineSpacingFactor,
@@ -274,6 +454,15 @@ namespace netDxf.Entities
                 Offset = this.offset,
                 Elevation = this.Elevation
             };
+
+            foreach (DimensionStyleOverride styleOverride in this.StyleOverrides.Values)
+            {
+                object copy;
+                ICloneable value = styleOverride.Value as ICloneable;
+                copy = value != null ? value.Clone() : styleOverride.Value;
+
+                entity.StyleOverrides.Add(new DimensionStyleOverride(styleOverride.Type, copy));
+            }
 
             foreach (XData data in this.XData.Values)
                 entity.XData.Add((XData) data.Clone());

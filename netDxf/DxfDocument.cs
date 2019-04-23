@@ -1,7 +1,7 @@
-﻿#region netDxf library, Copyright (C) 2009-2017 Daniel Carvajal (haplokuon@gmail.com)
+﻿#region netDxf library, Copyright (C) 2009-2019 Daniel Carvajal (haplokuon@gmail.com)
 
 //                        netDxf library
-// Copyright (C) 2009-2017 Daniel Carvajal (haplokuon@gmail.com)
+// Copyright (C) 2009-2019 Daniel Carvajal (haplokuon@gmail.com)
 // 
 // This library is free software; you can redistribute it and/or
 // modify it under the terms of the GNU Lesser General Public
@@ -23,6 +23,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using netDxf.Blocks;
 using netDxf.Collections;
 using netDxf.Entities;
@@ -35,7 +36,7 @@ using Attribute = netDxf.Entities.Attribute;
 namespace netDxf
 {
     /// <summary>
-    /// Represents a document to read and write dxf files.
+    /// Represents a document to read and write DXF files.
     /// </summary>
     public sealed class DxfDocument :
         DxfObject
@@ -43,10 +44,12 @@ namespace netDxf
         #region private fields
 
         private string name;
+        private readonly SupportFolders supportFolders;
+        private bool buildDimensionBlocks;
+        private long numHandles;
+
         //dxf objects added to the document (key: handle, value: dxf object).
-        internal Dictionary<string, DxfObject> AddedObjects;
-        // keeps track of the number of handles generated
-        internal long NumHandles;
+        internal ObservableDictionary<string, DxfObject> AddedObjects;
         // keeps track of the dimension blocks generated
         internal int DimensionBlocksIndex;
         // keeps track of the group names generated (this groups have the isUnnamed set to true)
@@ -67,42 +70,10 @@ namespace netDxf
         private Layers layers;
         private Linetypes linetypes;
         private TextStyles textStyles;
+        private ShapeStyles shapeStyles;
         private UCSs ucss;
         private Views views;
         private VPorts vports;
-
-        #endregion
-
-        #region entities
-
-        private readonly List<Arc> arcs;
-        private readonly List<Circle> circles;
-        private readonly List<Dimension> dimensions;
-        private readonly List<Ellipse> ellipses;
-        private readonly List<Solid> solids;
-        private readonly List<Trace> traces;
-        private readonly List<Face3d> faces3d;
-        private readonly List<Insert> inserts;
-        private readonly List<Line> lines;
-        private readonly List<Point> points;
-        private readonly List<PolyfaceMesh> polyfaceMeshes;
-        private readonly List<LwPolyline> lwPolylines;
-        private readonly List<Polyline> polylines;
-        private readonly List<Text> texts;
-        private readonly List<MText> mTexts;
-        private readonly List<Hatch> hatches;
-        private readonly List<Spline> splines;
-        private readonly List<Image> images;
-        private readonly List<MLine> mLines;
-        private readonly List<Ray> rays;
-        private readonly List<XLine> xlines;
-        private readonly List<Viewport> viewports;
-        private readonly List<Mesh> meshes;
-        private readonly List<Leader> leaders;
-        private readonly List<Tolerance> tolerances;
-        private readonly List<Underlay> underlays;
-        private readonly List<Wipeout> wipeouts;
-        private readonly List<AttributeDefinition> attributeDefinitions;
 
         #endregion
 
@@ -136,6 +107,16 @@ namespace netDxf
         /// <summary>
         /// Initializes a new instance of the <c>DxfDocument</c> class.
         /// </summary>
+        /// <param name="supportFolders">List of the document support folders.</param>
+        /// <remarks>The default <see cref="HeaderVariables">drawing variables</see> of the document will be used.</remarks>
+        public DxfDocument(IEnumerable<string> supportFolders)
+            : this(new HeaderVariables(), supportFolders)
+        {
+        }
+
+        /// <summary>
+        /// Initializes a new instance of the <c>DxfDocument</c> class.
+        /// </summary>
         /// <param name="version">AutoCAD drawing database version number.</param>
         public DxfDocument(DxfVersion version)
             : this(new HeaderVariables {AcadVer = version})
@@ -145,9 +126,29 @@ namespace netDxf
         /// <summary>
         /// Initializes a new instance of the <c>DxfDocument</c> class.
         /// </summary>
+        /// <param name="version">AutoCAD drawing database version number.</param>
+        /// <param name="supportFolders">List of the document support folders.</param>
+        public DxfDocument(DxfVersion version, IEnumerable<string> supportFolders)
+            : this(new HeaderVariables { AcadVer = version }, supportFolders)
+        {
+        }
+
+        /// <summary>
+        /// Initializes a new instance of the <c>DxfDocument</c> class.
+        /// </summary>
         /// <param name="drawingVariables"><see cref="HeaderVariables">Drawing variables</see> of the document.</param>
         public DxfDocument(HeaderVariables drawingVariables)
-            : this(drawingVariables, true)
+            : this(drawingVariables, true, new List<string>())
+        {
+        }
+
+        /// <summary>
+        /// Initializes a new instance of the <c>DxfDocument</c> class.
+        /// </summary>
+        /// <param name="drawingVariables"><see cref="HeaderVariables">Drawing variables</see> of the document.</param>
+        /// <param name="supportFolders">List of the document support folders.</param>
+        public DxfDocument(HeaderVariables drawingVariables, IEnumerable<string> supportFolders)
+            : this(drawingVariables, true, supportFolders)
         {
         }
 
@@ -156,51 +157,28 @@ namespace netDxf
         /// </summary>
         /// <param name="drawingVariables"><see cref="HeaderVariables">Drawing variables</see> of the document.</param>
         /// <param name="createDefaultObjects">Check if the default objects need to be created.</param>
-        internal DxfDocument(HeaderVariables drawingVariables, bool createDefaultObjects)
+        /// <param name="supportFolders">List of the document support folders.</param>
+        internal DxfDocument(HeaderVariables drawingVariables, bool createDefaultObjects, IEnumerable<string> supportFolders)
             : base("DOCUMENT")
         {
-            this.comments = new List<string> {"Dxf file generated by netDxf https://netdxf.codeplex.com, Copyright(C) 2009-2016 Daniel Carvajal, Licensed under LGPL"};
+            this.supportFolders = new SupportFolders(supportFolders);
+            this.buildDimensionBlocks = false;
+            this.comments = new List<string> { "Dxf file generated by netDxf https://github.com/haplokuon/netDxf, Copyright(C) 2009-2018 Daniel Carvajal, Licensed under LGPL" };
             this.Owner = null;
             this.drawingVariables = drawingVariables;
             this.NumHandles = this.AsignHandle(0);
-            this.DimensionBlocksIndex = 0;
+            this.DimensionBlocksIndex = -1;
             this.GroupNamesIndex = 0;
-            this.AddedObjects = new Dictionary<string, DxfObject>
+            this.AddedObjects = new ObservableDictionary<string, DxfObject>
             {
                 {this.Handle, this}
             }; // keeps track of the added objects
+            this.AddedObjects.BeforeAddItem += this.AddedObjects_BeforeAddItem;
+            this.AddedObjects.AddItem += this.AddedObjects_AddItem;
+            this.AddedObjects.BeforeRemoveItem += this.AddedObjects_BeforeRemoveItem;
+            this.AddedObjects.RemoveItem += this.AddedObjects_RemoveItem;
 
             this.activeLayout = Layout.ModelSpaceName;
-
-            // entities lists
-            this.arcs = new List<Arc>();
-            this.ellipses = new List<Ellipse>();
-            this.dimensions = new List<Dimension>();
-            this.faces3d = new List<Face3d>();
-            this.solids = new List<Solid>();
-            this.traces = new List<Trace>();
-            this.inserts = new List<Insert>();
-            this.lwPolylines = new List<LwPolyline>();
-            this.polylines = new List<Polyline>();
-            this.polyfaceMeshes = new List<PolyfaceMesh>();
-            this.lines = new List<Line>();
-            this.circles = new List<Circle>();
-            this.points = new List<Point>();
-            this.texts = new List<Text>();
-            this.mTexts = new List<MText>();
-            this.hatches = new List<Hatch>();
-            this.splines = new List<Spline>();
-            this.images = new List<Image>();
-            this.mLines = new List<MLine>();
-            this.rays = new List<Ray>();
-            this.xlines = new List<XLine>();
-            this.viewports = new List<Viewport>();
-            this.meshes = new List<Mesh>();
-            this.leaders = new List<Leader>();
-            this.tolerances = new List<Tolerance>();
-            this.underlays = new List<Underlay>();
-            this.wipeouts = new List<Wipeout>();
-            this.attributeDefinitions = new List<AttributeDefinition>();
 
             if (createDefaultObjects)
                 this.AddDefaultObjects();
@@ -208,7 +186,97 @@ namespace netDxf
 
         #endregion
 
+        #region internal properties
+
+        /// <summary>
+        /// Gets or sets the number of handles generated, this value is saved as an hexadecimal in the drawing variables HandleSeed property.
+        /// </summary>
+        internal long NumHandles
+        {
+            get { return this.numHandles; }
+            set
+            {
+                this.DrawingVariables.HandleSeed = value.ToString("X");
+                this.numHandles = value;
+            }
+        }
+
+        #endregion
+
         #region public properties
+
+        /// <summary>
+        /// Gets the list of folders where the drawing support files are present.
+        /// </summary>
+        /// <remarks>
+        /// When shape linetype segments are used, the shape number will be obtained reading the .shp file equivalent to the .shx file,
+        /// that file will be looked for in the same folder as the .shx file or one of the document support folders.
+        /// </remarks>
+        public SupportFolders SupportFolders
+        {
+            get { return this.supportFolders; }
+        }
+
+        //// <summary>
+        //// Gets or sets if the blocks that represents dimension entities will be created when added to the document.
+        //// </summary>
+        /// <remarks>
+        /// By default this value is set to false, no dimension blocks will be generated when adding dimension entities to the document.
+        /// It will be the responsibility of the program importing the DXF to generate the drawing that represent the dimensions.<br />
+        /// When set to true the block that represents the dimension will be generated,
+        /// keep in mind that this process is limited and not all options available in the dimension style will be reflected in the final result.<br />
+        /// When importing a file if the dimension block is present it will be read, regardless of this value.
+        /// If, later, the dimension is modified all updates will be done with the limited dimension drawing capabilities of the library,
+        /// in this case, if you want that the new modifications to be reflected when the file is saved again you can set the dimension block to null,
+        /// and the program reading the resulting file will regenerate the block with the new modifications.
+        /// </remarks>
+        public bool BuildDimensionBlocks
+        {
+            get { return this.buildDimensionBlocks; }
+            set { this.buildDimensionBlocks = value; }
+        }
+
+        /// <summary>
+        /// Gets the document viewport.
+        /// </summary>
+        /// <remarks>
+        /// This is the same as the *Active VPort in the VPorts list, it describes the current viewport.
+        /// </remarks>
+        public VPort Viewport
+        {
+            get { return this.vports["*Active"]; }
+        }
+
+        /// <summary>
+        /// Gets or sets the name of the active layout.
+        /// </summary>
+        public string ActiveLayout
+        {
+            get { return this.activeLayout; }
+            set
+            {
+                if (!this.layouts.Contains(value))
+                    throw new ArgumentException(string.Format("The layout {0} does not exist.", value), nameof(value));
+                this.activeLayout = value;
+            }
+        }
+
+        /// <summary>
+        /// Gets or sets the <see cref="RasterVariables">RasterVariables</see> applied to image entities.
+        /// </summary>
+        public RasterVariables RasterVariables
+        {
+            get { return this.rasterVariables; }
+            set
+            {
+                if (value == null)
+                    throw new ArgumentNullException(nameof(value));
+                if (string.IsNullOrEmpty(value.Handle))
+                    this.NumHandles = value.AsignHandle(this.NumHandles);
+                this.AddedObjects.Add(value.Handle, value);
+                this.rasterVariables = value;
+            }
+        }
 
         #region header
 
@@ -232,7 +300,7 @@ namespace netDxf
         /// Gets or sets the name of the document.
         /// </summary>
         /// <remarks>
-        /// When a file is loaded this field is equals the file name without extension.<br />
+        /// When a file is loaded this field is equals the file name without extension.
         /// </remarks>
         public string Name
         {
@@ -254,7 +322,7 @@ namespace netDxf
         }
 
         /// <summary>
-        /// Gets the <see cref="Layers">layer</see> collection.
+        /// Gets the <see cref="Layers">layers</see> collection.
         /// </summary>
         public Layers Layers
         {
@@ -263,7 +331,7 @@ namespace netDxf
         }
 
         /// <summary>
-        /// Gets the <see cref="Linetypes">line type</see> collection.
+        /// Gets the <see cref="Linetypes">line types</see> collection.
         /// </summary>
         public Linetypes Linetypes
         {
@@ -272,7 +340,7 @@ namespace netDxf
         }
 
         /// <summary>
-        /// Gets the <see cref="TextStyles">text style</see> collection.
+        /// Gets the <see cref="TextStyles">text styles</see> collection.
         /// </summary>
         public TextStyles TextStyles
         {
@@ -281,7 +349,20 @@ namespace netDxf
         }
 
         /// <summary>
-        /// Gets the <see cref="DimensionStyles">dimension style</see> collection.
+        /// Gets the <see cref="ShapeStyles">shape styles</see> collection.
+        /// </summary>
+        /// <remarks>
+        /// The dxf stores the TextStyles and ShapeStyles in the same table list, here, they are separated since they serve a different role.
+        /// Under normal circumstances you should not need to access this list.
+        /// </remarks>
+        public ShapeStyles ShapeStyles
+        {
+            get { return this.shapeStyles; }
+            internal set { this.shapeStyles = value; }
+        }
+
+        /// <summary>
+        /// Gets the <see cref="DimensionStyles">dimension styles</see> collection.
         /// </summary>
         public DimensionStyles DimensionStyles
         {
@@ -299,7 +380,7 @@ namespace netDxf
         }
 
         /// <summary>
-        /// Gets the <see cref="UCSs">User coordinate system</see> collection.
+        /// Gets the <see cref="UCSs">User coordinate systems</see> collection.
         /// </summary>
         public UCSs UCSs
         {
@@ -393,273 +474,235 @@ namespace netDxf
         #region public entities properties
 
         /// <summary>
-        /// Gets the <see cref="Arc">arcs</see> list.
+        /// Gets the <see cref="Arc">arcs</see> list contained in the active layout.
         /// </summary>
-        public IReadOnlyList<Arc> Arcs
+        public IEnumerable<Arc> Arcs
         {
-            get { return this.arcs; }
+            get { return this.Layouts[this.activeLayout].AssociatedBlock.Entities.OfType<Arc>(); }
         }
 
         /// <summary>
-        /// Gets the <see cref="AttributeDefinition">attribute definitions</see> list.
+        /// Gets the <see cref="AttributeDefinition">attribute definitions</see> list in the active layout.
         /// </summary>
-        public IReadOnlyList<AttributeDefinition> AttributeDefinitions
+        public IEnumerable<AttributeDefinition> AttributeDefinitions
         {
-            get { return this.attributeDefinitions; }
+            get { return this.Layouts[this.activeLayout].AssociatedBlock.AttributeDefinitions.Values; }
         }
 
         /// <summary>
-        /// Gets the <see cref="Ellipse">ellipses</see> list.
+        /// Gets the <see cref="Ellipse">ellipses</see> list in the active layout.
         /// </summary>
-        public IReadOnlyList<Ellipse> Ellipses
+        public IEnumerable<Ellipse> Ellipses
         {
-            get { return this.ellipses; }
+            get { return this.Layouts[this.activeLayout].AssociatedBlock.Entities.OfType<Ellipse>(); }
         }
 
         /// <summary>
-        /// Gets the <see cref="Circle">circles</see> list.
+        /// Gets the <see cref="Circle">circles</see> list in the active layout.
         /// </summary>
-        public IReadOnlyList<Circle> Circles
+        public IEnumerable<Circle> Circles
         {
-            get { return this.circles; }
+            get { return this.Layouts[this.activeLayout].AssociatedBlock.Entities.OfType<Circle>(); }
         }
 
         /// <summary>
-        /// Gets the <see cref="Face3d">3d faces</see> list.
+        /// Gets the <see cref="Face3d">3d faces</see> list in the active layout.
         /// </summary>
-        public IReadOnlyList<Face3d> Faces3d
+        public IEnumerable<Face3d> Faces3d
         {
-            get { return this.faces3d; }
+            get { return this.Layouts[this.activeLayout].AssociatedBlock.Entities.OfType<Face3d>(); }
         }
 
         /// <summary>
-        /// Gets the <see cref="Solid">solids</see> list.
+        /// Gets the <see cref="Solid">solids</see> list in the active layout.
         /// </summary>
-        public IReadOnlyList<Solid> Solids
+        public IEnumerable<Solid> Solids
         {
-            get { return this.solids; }
+            get { return this.Layouts[this.activeLayout].AssociatedBlock.Entities.OfType<Solid>(); }
         }
 
         /// <summary>
-        /// Gets the <see cref="Trace">traces</see> list.
+        /// Gets the <see cref="Trace">traces</see> list in the active layout.
         /// </summary>
-        public IReadOnlyList<Trace> Traces
+        public IEnumerable<Trace> Traces
         {
-            get { return this.traces; }
+            get { return this.Layouts[this.activeLayout].AssociatedBlock.Entities.OfType<Trace>(); }
         }
 
         /// <summary>
-        /// Gets the <see cref="Insert">inserts</see> list.
+        /// Gets the <see cref="Insert">inserts</see> list in the active layout.
         /// </summary>
-        public IReadOnlyList<Insert> Inserts
+        public IEnumerable<Insert> Inserts
         {
-            get { return this.inserts; }
+            get { return this.Layouts[this.activeLayout].AssociatedBlock.Entities.OfType<Insert>(); }
         }
 
         /// <summary>
-        /// Gets the <see cref="Line">lines</see> list.
+        /// Gets the <see cref="Line">lines</see> list in the active layout.
         /// </summary>
-        public IReadOnlyList<Line> Lines
+        public IEnumerable<Line> Lines
         {
-            get { return this.lines; }
+            get { return this.Layouts[this.activeLayout].AssociatedBlock.Entities.OfType<Line>(); }
         }
 
         /// <summary>
-        /// Gets the <see cref="Polyline">polylines</see> list.
+        /// Gets the <see cref="Shape">shapes</see> list in the active layout.
         /// </summary>
-        public IReadOnlyList<Polyline> Polylines
+        public IEnumerable<Shape> Shapes
         {
-            get { return this.polylines; }
+            get { return this.Layouts[this.activeLayout].AssociatedBlock.Entities.OfType<Shape>(); }
         }
 
         /// <summary>
-        /// Gets the <see cref="LwPolyline">light weight polylines</see> list.
+        /// Gets the <see cref="Polyline">polylines</see> list in the active layout.
         /// </summary>
-        public IReadOnlyList<LwPolyline> LwPolylines
+        public IEnumerable<Polyline> Polylines
         {
-            get { return this.lwPolylines; }
+            get { return this.Layouts[this.activeLayout].AssociatedBlock.Entities.OfType<Polyline>(); }
         }
 
         /// <summary>
-        /// Gets the <see cref="PolyfaceMeshes">polyface meshes</see> list.
+        /// Gets the <see cref="LwPolyline">light weight polylines</see> list in the active layout.
         /// </summary>
-        public IReadOnlyList<PolyfaceMesh> PolyfaceMeshes
+        public IEnumerable<LwPolyline> LwPolylines
         {
-            get { return this.polyfaceMeshes; }
+            get { return this.Layouts[this.activeLayout].AssociatedBlock.Entities.OfType<LwPolyline>(); }
         }
 
         /// <summary>
-        /// Gets the <see cref="Point">points</see> list.
+        /// Gets the <see cref="PolyfaceMeshes">polyface meshes</see> list in the active layout.
         /// </summary>
-        public IReadOnlyList<Point> Points
+        public IEnumerable<PolyfaceMesh> PolyfaceMeshes
         {
-            get { return this.points; }
+            get { return this.Layouts[this.activeLayout].AssociatedBlock.Entities.OfType<PolyfaceMesh>(); }
         }
 
         /// <summary>
-        /// Gets the <see cref="Text">texts</see> list.
+        /// Gets the <see cref="Point">points</see> list in the active layout.
         /// </summary>
-        public IReadOnlyList<Text> Texts
+        public IEnumerable<Point> Points
         {
-            get { return this.texts; }
+            get { return this.Layouts[this.activeLayout].AssociatedBlock.Entities.OfType<Point>(); }
         }
 
         /// <summary>
-        /// Gets the <see cref="MText">multiline texts</see> list.
+        /// Gets the <see cref="Text">texts</see> list in the active layout.
         /// </summary>
-        public IReadOnlyList<MText> MTexts
+        public IEnumerable<Text> Texts
         {
-            get { return this.mTexts; }
+            get { return this.Layouts[this.activeLayout].AssociatedBlock.Entities.OfType<Text>(); }
         }
 
         /// <summary>
-        /// Gets the <see cref="Hatch">hatches</see> list.
+        /// Gets the <see cref="MText">multiline texts</see> list in the active layout.
         /// </summary>
-        public IReadOnlyList<Hatch> Hatches
+        public IEnumerable<MText> MTexts
         {
-            get { return this.hatches; }
+            get { return this.Layouts[this.activeLayout].AssociatedBlock.Entities.OfType<MText>(); }
         }
 
         /// <summary>
-        /// Gets the <see cref="Image">images</see> list.
+        /// Gets the <see cref="Hatch">hatches</see> list in the active layout.
         /// </summary>
-        public IReadOnlyList<Image> Images
+        public IEnumerable<Hatch> Hatches
         {
-            get { return this.images; }
+            get { return this.Layouts[this.activeLayout].AssociatedBlock.Entities.OfType<Hatch>(); }
         }
 
         /// <summary>
-        /// Gets the <see cref="Mesh">mesh</see> list.
+        /// Gets the <see cref="Image">images</see> list in the active layout.
         /// </summary>
-        public IReadOnlyList<Mesh> Meshes
+        public IEnumerable<Image> Images
         {
-            get { return this.meshes; }
+            get { return this.Layouts[this.activeLayout].AssociatedBlock.Entities.OfType<Image>(); }
         }
 
         /// <summary>
-        /// Gets the <see cref="Leader">leader</see> list.
+        /// Gets the <see cref="Mesh">mesh</see> list in the active layout.
         /// </summary>
-        public IReadOnlyList<Leader> Leaders
+        public IEnumerable<Mesh> Meshes
         {
-            get { return this.leaders; }
+            get { return this.Layouts[this.activeLayout].AssociatedBlock.Entities.OfType<Mesh>(); }
         }
 
         /// <summary>
-        /// Gets the <see cref="Tolerance">tolerance</see> list.
+        /// Gets the <see cref="Leader">leader</see> list in the active layout.
         /// </summary>
-        public IReadOnlyList<Tolerance> Tolerances
+        public IEnumerable<Leader> Leaders
         {
-            get { return this.tolerances; }
+            get { return this.Layouts[this.activeLayout].AssociatedBlock.Entities.OfType<Leader>(); }
         }
 
         /// <summary>
-        /// Gets the <see cref="Underlay">underlay</see> list.
+        /// Gets the <see cref="Tolerance">tolerance</see> list in the active layout.
         /// </summary>
-        public IReadOnlyList<Underlay> Underlays
+        public IEnumerable<Tolerance> Tolerances
         {
-            get { return this.underlays; }
+            get { return this.Layouts[this.activeLayout].AssociatedBlock.Entities.OfType<Tolerance>(); }
         }
 
         /// <summary>
-        /// Gets the <see cref="MLine">multilines</see> list.
+        /// Gets the <see cref="Underlay">underlay</see> list in the active layout.
         /// </summary>
-        public IReadOnlyList<MLine> MLines
+        public IEnumerable<Underlay> Underlays
         {
-            get { return this.mLines; }
+            get { return this.Layouts[this.activeLayout].AssociatedBlock.Entities.OfType<Underlay>(); }
         }
 
         /// <summary>
-        /// Gets the <see cref="Dimension">dimensions</see> list.
+        /// Gets the <see cref="MLine">multilines</see> list in the active layout.
         /// </summary>
-        public IReadOnlyList<Dimension> Dimensions
+        public IEnumerable<MLine> MLines
         {
-            get { return this.dimensions; }
+            get { return this.Layouts[this.activeLayout].AssociatedBlock.Entities.OfType<MLine>(); }
         }
 
         /// <summary>
-        /// Gets the <see cref="Spline">splines</see> list.
+        /// Gets the <see cref="Dimension">dimensions</see> list in the active layout.
         /// </summary>
-        public IReadOnlyList<Spline> Splines
+        public IEnumerable<Dimension> Dimensions
         {
-            get { return this.splines; }
+            get { return this.Layouts[this.activeLayout].AssociatedBlock.Entities.OfType<Dimension>(); }
         }
 
         /// <summary>
-        /// Gets the <see cref="Ray">rays</see> list.
+        /// Gets the <see cref="Spline">splines</see> list in the active layout.
         /// </summary>
-        public IReadOnlyList<Ray> Rays
+        public IEnumerable<Spline> Splines
         {
-            get { return this.rays; }
+            get { return this.Layouts[this.activeLayout].AssociatedBlock.Entities.OfType<Spline>(); }
         }
 
         /// <summary>
-        /// Gets the <see cref="Viewport">viewports</see> list.
+        /// Gets the <see cref="Ray">rays</see> list in the active layout.
         /// </summary>
-        public IReadOnlyList<Viewport> Viewports
+        public IEnumerable<Ray> Rays
         {
-            get { return this.viewports; }
+            get { return this.Layouts[this.activeLayout].AssociatedBlock.Entities.OfType<Ray>(); }
         }
 
         /// <summary>
-        /// Gets the <see cref="XLine">extension lines</see> list.
+        /// Gets the <see cref="Viewport">viewports</see> list in the active layout.
         /// </summary>
-        public IReadOnlyList<XLine> XLines
+        public IEnumerable<Viewport> Viewports
         {
-            get { return this.xlines; }
+            get { return this.Layouts[this.activeLayout].AssociatedBlock.Entities.OfType<Viewport>(); }
         }
 
         /// <summary>
-        /// Gets the <see cref="Wipeout">wipeouts</see> list.
+        /// Gets the <see cref="XLine">extension lines</see> list in the active layout.
         /// </summary>
-        public IReadOnlyList<Wipeout> Wipeouts
+        public IEnumerable<XLine> XLines
         {
-            get { return this.wipeouts; }
-        }
-
-        #endregion
-
-        #region public object properties
-
-        /// <summary>
-        /// Gets the document viewport.
-        /// </summary>
-        /// <remarks>
-        /// This is the same as the *Active VPort in the VPorts list, it describes the current viewport.
-        /// </remarks>
-        public VPort Viewport
-        {
-            get { return this.vports["*Active"]; }
+            get { return this.Layouts[this.activeLayout].AssociatedBlock.Entities.OfType<XLine>(); }
         }
 
         /// <summary>
-        /// Gets or sets the name of the active layout.
+        /// Gets the <see cref="Wipeout">wipeouts</see> list in the active layout.
         /// </summary>
-        public string ActiveLayout
+        public IEnumerable<Wipeout> Wipeouts
         {
-            get { return this.activeLayout; }
-            set
-            {
-                if (!this.layouts.Contains(value))
-                    throw new ArgumentException("The layout " + value + " does not exist.", nameof(value));
-                this.activeLayout = value;
-            }
-        }
-
-        /// <summary>
-        /// Gets or sets the <see cref="RasterVariables">raster variables</see> applied to image entities.
-        /// </summary>
-        public RasterVariables RasterVariables
-        {
-            get { return this.rasterVariables; }
-            set
-            {
-                if (value == null)
-                    throw new ArgumentNullException(nameof(value));
-                if (string.IsNullOrEmpty(value.Handle))
-                    this.NumHandles = value.AsignHandle(this.NumHandles);
-                this.AddedObjects.Add(value.Handle, value);
-                this.rasterVariables = value;
-            }
+            get { return this.Layouts[this.activeLayout].AssociatedBlock.Entities.OfType<Wipeout>(); }
         }
 
         #endregion
@@ -704,7 +747,11 @@ namespace netDxf
         /// <param name="entity">An <see cref="EntityObject">entity</see> to add to the document.</param>
         public void AddEntity(EntityObject entity)
         {
-            this.AddEntity(entity, false, true);
+            // entities already owned by another document are not allowed
+            if (entity.Owner != null)
+                throw new ArgumentException("The entity already belongs to a document. Clone it instead.", nameof(entity));
+
+            this.Blocks[this.layouts[this.activeLayout].AssociatedBlock.Name].Entities.Add(entity);
         }
 
         /// <summary>
@@ -723,7 +770,7 @@ namespace netDxf
 
             foreach (EntityObject entity in entities)
             {
-                this.RemoveEntity(entity, false);
+                this.RemoveEntity(entity);
             }
         }
 
@@ -739,7 +786,26 @@ namespace netDxf
         /// </remarks>
         public bool RemoveEntity(EntityObject entity)
         {
-            return this.RemoveEntity(entity, false);
+            if (entity == null)
+                return false;
+
+            if (entity.Handle == null)
+                return false;
+
+            if (entity.Owner == null)
+                return false;
+
+            if (entity.Reactors.Count > 0)
+                return false;
+
+            if (entity.Owner.Record.Layout == null)
+                return false;
+
+            if (!this.AddedObjects.ContainsKey(entity.Handle))
+                return false;
+
+            return this.blocks[entity.Owner.Name].Entities.Remove(entity);
+
         }
 
         #endregion
@@ -747,43 +813,52 @@ namespace netDxf
         #region public methods
 
         /// <summary>
-        /// Loads a dxf file.
+        /// Loads a DXF file.
         /// </summary>
         /// <param name="file">File name.</param>
         /// <returns>Returns a DxfDocument. It will return null if the file has not been able to load.</returns>
-        /// <exception cref="FileNotFoundException"></exception>
-        /// <exception cref="IOException"></exception>
+        /// <exception cref="DxfVersionNotSupportedException"></exception>
         /// <remarks>
-        /// Loading dxf files prior to AutoCad 2000 is not supported.<br />
+        /// Loading DXF files prior to AutoCad 2000 is not supported.<br />
         /// The Load method will still raise an exception if they are unable to create the FileStream.<br />
         /// On Debug mode it will raise any exception that might occur during the whole process.
         /// </remarks>
         public static DxfDocument Load(string file)
         {
-            FileInfo fileInfo = new FileInfo(file);
-            if (!fileInfo.Exists)
-                throw new FileNotFoundException(string.Format("File {0} not found.", fileInfo.FullName), fileInfo.FullName);
+            return Load(file, new List<string>());
+        }
 
-            Stream stream;
-            try
-            {
-                stream = File.Open(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-            }
-            catch (Exception ex)
-            {
-                throw new IOException(string.Format("Error trying to open the file {0} for reading.", fileInfo.FullName), ex);
-            }
+        /// <summary>
+        /// Loads a DXF file.
+        /// </summary>
+        /// <param name="file">File name.</param>
+        /// <param name="supportFolders">List of the document support folders.</param>
+        /// <returns>Returns a DxfDocument. It will return null if the file has not been able to load.</returns>
+        /// <exception cref="DxfVersionNotSupportedException"></exception>
+        /// <remarks>
+        /// Loading DXF files prior to AutoCad 2000 is not supported.<br />
+        /// The Load method will still raise an exception if they are unable to create the FileStream.<br />
+        /// On Debug mode it will raise any exception that might occur during the whole process.
+        /// </remarks>
+        public static DxfDocument Load(string file, IEnumerable<string> supportFolders)
+        {            
+
+            Stream stream = File.Open(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
 
             DxfReader dxfReader = new DxfReader();
 
 #if DEBUG
-            DxfDocument document = dxfReader.Read(stream);
+            DxfDocument document = dxfReader.Read(stream, supportFolders);
             stream.Close();
 #else
             DxfDocument document;
             try
             {
-                 document = dxfReader.Read(stream);
+                document = dxfReader.Read(stream, supportFolders);
+            }
+            catch (DxfVersionNotSupportedException)
+            {
+                throw;
             }
             catch
             {
@@ -795,31 +870,53 @@ namespace netDxf
             }
 
 #endif
-            document.name = Path.GetFileNameWithoutExtension(fileInfo.FullName);
+            document.name = Path.GetFileNameWithoutExtension(file);
             return document;
         }
 
         /// <summary>
-        /// Loads a dxf file.
+        /// Loads a DXF file.
         /// </summary>
         /// <param name="stream">Stream.</param>
         /// <returns>Returns a DxfDocument. It will return null if the file has not been able to load.</returns>
+        /// <exception cref="DxfVersionNotSupportedException"></exception>
         /// <remarks>
-        /// Loading dxf files prior to AutoCad 2000 is not supported.<br />
+        /// Loading DXF files prior to AutoCad 2000 is not supported.<br />
         /// On Debug mode it will raise any exception that might occur during the whole process.<br />
         /// The caller will be responsible of closing the stream.
         /// </remarks>
         public static DxfDocument Load(Stream stream)
         {
+            return Load(stream, new List<string>());
+        }
+
+        /// <summary>
+        /// Loads a DXF file.
+        /// </summary>
+        /// <param name="stream">Stream.</param>
+        /// <param name="supportFolders">List of the document support folders.</param>
+        /// <returns>Returns a DxfDocument. It will return null if the file has not been able to load.</returns>
+        /// <exception cref="DxfVersionNotSupportedException"></exception>
+        /// <remarks>
+        /// Loading DXF files prior to AutoCad 2000 is not supported.<br />
+        /// On Debug mode it will raise any exception that might occur during the whole process.<br />
+        /// The caller will be responsible of closing the stream.
+        /// </remarks>
+        public static DxfDocument Load(Stream stream, IEnumerable<string> supportFolders)
+        {
             DxfReader dxfReader = new DxfReader();
 
 #if DEBUG
-            DxfDocument document = dxfReader.Read(stream);
+            DxfDocument document = dxfReader.Read(stream, supportFolders);
 #else
             DxfDocument document;
             try
             {
-                 document = dxfReader.Read(stream);
+                 document = dxfReader.Read(stream, supportFolders);
+            }
+            catch (DxfVersionNotSupportedException)
+            {
+                throw;
             }
             catch
             {
@@ -831,10 +928,11 @@ namespace netDxf
         }
 
         /// <summary>
-        /// Saves the database of the actual DxfDocument to a text dxf file.
+        /// Saves the database of the actual DxfDocument to a text DXF file.
         /// </summary>
         /// <param name="file">File name.</param>
         /// <returns>Return true if the file has been successfully save, false otherwise.</returns>
+        /// <exception cref="DxfVersionNotSupportedException"></exception>
         /// <remarks>
         /// If the file already exists it will be overwritten.<br />
         /// The Save method will still raise an exception if they are unable to create the FileStream.<br />
@@ -846,11 +944,12 @@ namespace netDxf
         }
 
         /// <summary>
-        /// Saves the database of the actual DxfDocument to a dxf file.
+        /// Saves the database of the actual DxfDocument to a DXF file.
         /// </summary>
         /// <param name="file">File name.</param>
         /// <param name="isBinary">Defines if the file will be saved as binary.</param>
         /// <returns>Return true if the file has been successfully save, false otherwise.</returns>
+        /// <exception cref="DxfVersionNotSupportedException"></exception>
         /// <remarks>
         /// If the file already exists it will be overwritten.<br />
         /// The Save method will still raise an exception if they are unable to create the FileStream.<br />
@@ -873,6 +972,10 @@ namespace netDxf
             {
                 dxfWriter.Write(stream, this, isBinary);
             }
+            catch (DxfVersionNotSupportedException)
+            {
+                throw;
+            }
             catch
             {
                 return false;
@@ -891,6 +994,7 @@ namespace netDxf
         /// </summary>
         /// <param name="stream">Stream.</param>
         /// <returns>Return true if the stream has been successfully saved, false otherwise.</returns>
+        /// <exception cref="DxfVersionNotSupportedException"></exception>
         /// <remarks>
         /// On Debug mode it will raise any exception that might occur during the whole process.<br />
         /// The caller will be responsible of closing the stream.
@@ -906,6 +1010,7 @@ namespace netDxf
         /// <param name="stream">Stream.</param>
         /// <param name="isBinary">Defines if the file will be saved as binary.</param>
         /// <returns>Return true if the stream has been successfully saved, false otherwise.</returns>
+        /// <exception cref="DxfVersionNotSupportedException"></exception>
         /// <remarks>
         /// On Debug mode it will raise any exception that might occur during the whole process.<br />
         /// The caller will be responsible of closing the stream.
@@ -921,6 +1026,10 @@ namespace netDxf
             {
                 dxfWriter.Write(stream, this, isBinary);
             }
+            catch (DxfVersionNotSupportedException)
+            {
+                throw;
+            }
             catch
             {
                 return false;
@@ -931,7 +1040,7 @@ namespace netDxf
         }
 
         /// <summary>
-        /// Checks the AutoCAD dxf file database version.
+        /// Checks the AutoCAD DXF file database version.
         /// </summary>
         /// <param name="stream">Stream</param>
         /// <param name="isBinary">Returns true if the dxf is a binary file.</param>
@@ -940,11 +1049,16 @@ namespace netDxf
         public static DxfVersion CheckDxfFileVersion(Stream stream, out bool isBinary)
         {
             string value = DxfReader.CheckHeaderVariable(stream, HeaderVariableCode.AcadVer, out isBinary);
-            return (DxfVersion) StringEnum.Parse(typeof (DxfVersion), value);
+
+            object version;
+            if (!StringEnum.TryParse(typeof(DxfVersion), value, out version))
+                return DxfVersion.Unknown;
+
+            return (DxfVersion)version;
         }
 
         /// <summary>
-        /// Checks the AutoCAD dxf file database version.
+        /// Checks the AutoCAD DXF file database version.
         /// </summary>
         /// <param name="file">File name.</param>
         /// <param name="isBinary">Returns true if the dxf is a binary file.</param>
@@ -969,271 +1083,85 @@ namespace netDxf
                 stream.Close();
             }
 
-            if (string.IsNullOrEmpty(value))
+            object version;
+            if (!StringEnum.TryParse(typeof(DxfVersion), value, out version))
                 return DxfVersion.Unknown;
 
-            return (DxfVersion) StringEnum.Parse(typeof (DxfVersion), value);
+            return (DxfVersion) version;
         }
 
         #endregion
 
-        #region private methods
+        #region internal methods
 
-        private void AddDimensionStyleOverrides(Dimension dim, bool assignHandle)
-        {
-            // add the style override referenced DxfObjects
-            DimensionStyleOverride styleOverride;
-
-            // add referenced text style
-            if (dim.StyleOverrides.TryGetValue(DimensionStyleOverrideType.TextStyle, out styleOverride))
-            {
-                TextStyle dimtxtsty = (TextStyle) styleOverride.Value;
-                dim.StyleOverrides[styleOverride.Type] = new DimensionStyleOverride(styleOverride.Type, this.textStyles.Add(dimtxtsty, assignHandle));
-                this.textStyles.References[dimtxtsty.Name].Add(dim);
-            }
-
-            // add referenced blocks
-            if (dim.StyleOverrides.TryGetValue(DimensionStyleOverrideType.LeaderArrow, out styleOverride))
-            {
-                Block block = (Block) styleOverride.Value;
-                if (block != null)
-                {
-                    dim.StyleOverrides[styleOverride.Type] = new DimensionStyleOverride(styleOverride.Type, this.blocks.Add(block, assignHandle));
-                    this.blocks.References[block.Name].Add(dim);
-                }
-            }
-
-            if (dim.StyleOverrides.TryGetValue(DimensionStyleOverrideType.DimArrow1, out styleOverride))
-            {
-                Block block = (Block) styleOverride.Value;
-                if (block != null)
-                {
-                    dim.StyleOverrides[styleOverride.Type] = new DimensionStyleOverride(styleOverride.Type, this.blocks.Add(block, assignHandle));
-                    this.blocks.References[block.Name].Add(dim);
-                }
-            }
-
-            if (dim.StyleOverrides.TryGetValue(DimensionStyleOverrideType.DimArrow2, out styleOverride))
-            {
-                Block block = (Block) styleOverride.Value;
-                if (block != null)
-                {
-                    dim.StyleOverrides[styleOverride.Type] = new DimensionStyleOverride(styleOverride.Type, this.blocks.Add(block, assignHandle));
-                    this.blocks.References[block.Name].Add(dim);
-                }
-            }
-
-            // add referenced line types
-            if (dim.StyleOverrides.TryGetValue(DimensionStyleOverrideType.DimLineLinetype, out styleOverride))
-            {
-                Linetype linetype = (Linetype) styleOverride.Value;
-                dim.StyleOverrides[styleOverride.Type] = new DimensionStyleOverride(styleOverride.Type, this.linetypes.Add(linetype, assignHandle));
-                this.linetypes.References[linetype.Name].Add(dim);
-            }
-
-            if (dim.StyleOverrides.TryGetValue(DimensionStyleOverrideType.ExtLine1Linetype, out styleOverride))
-            {
-                Linetype linetype = (Linetype) styleOverride.Value;
-                dim.StyleOverrides[styleOverride.Type] = new DimensionStyleOverride(styleOverride.Type, this.linetypes.Add(linetype, assignHandle));
-                this.linetypes.References[linetype.Name].Add(dim);
-            }
-
-            if (dim.StyleOverrides.TryGetValue(DimensionStyleOverrideType.ExtLine2Linetype, out styleOverride))
-            {
-                Linetype linetype = (Linetype) styleOverride.Value;
-                dim.StyleOverrides[styleOverride.Type] = new DimensionStyleOverride(styleOverride.Type, this.linetypes.Add(linetype, assignHandle));
-                this.linetypes.References[linetype.Name].Add(dim);
-            }
-        }
-
-        private void AddStyleOverrides(EntityObject entity, bool assignHandle)
-        {
-            DimensionStyleOverrideDictionary overrides;
-            switch (entity.Type)
-            {
-                case EntityType.Dimension:
-                    overrides = ((Dimension) entity).StyleOverrides;
-                    break;
-                case EntityType.Leader:
-                    overrides = ((Leader) entity).StyleOverrides;
-                    break;
-                default:
-                    return;
-            }
-
-            // add the style override referenced DxfObjects
-            DimensionStyleOverride styleOverride;
-
-            // add referenced text style
-            overrides.TryGetValue(DimensionStyleOverrideType.TextStyle, out styleOverride);
-            if (styleOverride != null)
-            {
-                TextStyle dimtxtsty = (TextStyle) styleOverride.Value;
-                overrides[styleOverride.Type] = new DimensionStyleOverride(styleOverride.Type, this.textStyles.Add(dimtxtsty, assignHandle));
-                this.textStyles.References[dimtxtsty.Name].Add(entity);
-            }
-
-            // add referenced blocks
-            overrides.TryGetValue(DimensionStyleOverrideType.LeaderArrow, out styleOverride);
-            if (styleOverride != null)
-            {
-                Block block = (Block) styleOverride.Value;
-                if (block != null)
-                {
-                    overrides[styleOverride.Type] = new DimensionStyleOverride(styleOverride.Type, this.blocks.Add(block, assignHandle));
-                    this.blocks.References[block.Name].Add(entity);
-                }
-            }
-
-            overrides.TryGetValue(DimensionStyleOverrideType.DimArrow1, out styleOverride);
-            if (styleOverride != null)
-            {
-                Block block = (Block) styleOverride.Value;
-                if (block != null)
-                {
-                    overrides[styleOverride.Type] = new DimensionStyleOverride(styleOverride.Type, this.blocks.Add(block, assignHandle));
-                    this.blocks.References[block.Name].Add(entity);
-                }
-            }
-
-            overrides.TryGetValue(DimensionStyleOverrideType.DimArrow2, out styleOverride);
-            if (styleOverride != null)
-            {
-                Block block = (Block) styleOverride.Value;
-                if (block != null)
-                {
-                    overrides[styleOverride.Type] = new DimensionStyleOverride(styleOverride.Type, this.blocks.Add(block, assignHandle));
-                    this.blocks.References[block.Name].Add(entity);
-                }
-            }
-
-            // add referenced line types
-            overrides.TryGetValue(DimensionStyleOverrideType.DimLineLinetype, out styleOverride);
-            if (styleOverride != null)
-            {
-                Linetype linetype = (Linetype) styleOverride.Value;
-                overrides[styleOverride.Type] = new DimensionStyleOverride(styleOverride.Type, this.linetypes.Add(linetype, assignHandle));
-                this.linetypes.References[linetype.Name].Add(entity);
-            }
-
-            overrides.TryGetValue(DimensionStyleOverrideType.ExtLine1Linetype, out styleOverride);
-            if (styleOverride != null)
-            {
-                Linetype linetype = (Linetype) styleOverride.Value;
-                overrides[styleOverride.Type] = new DimensionStyleOverride(styleOverride.Type, this.linetypes.Add(linetype, assignHandle));
-                this.linetypes.References[linetype.Name].Add(entity);
-            }
-
-            overrides.TryGetValue(DimensionStyleOverrideType.ExtLine2Linetype, out styleOverride);
-            if (styleOverride != null)
-            {
-                Linetype linetype = (Linetype) styleOverride.Value;
-                overrides[styleOverride.Type] = new DimensionStyleOverride(styleOverride.Type, this.linetypes.Add(linetype, assignHandle));
-                this.linetypes.References[linetype.Name].Add(entity);
-            }
-        }
-
-        internal void AddEntity(EntityObject entity, bool isBlockEntity, bool assignHandle)
+        internal void AddEntityToDocument(EntityObject entity, Block block, bool assignHandle)
         {
             // null entities are not allowed
             if (entity == null)
                 throw new ArgumentNullException(nameof(entity));
 
-            // entities already owned by another document are not allowed
-            if (entity.Owner != null && !isBlockEntity)
-                throw new ArgumentException("The entity already belongs to a document. Clone it instead.", nameof(entity));
-
             // assign a handle
             if (assignHandle || string.IsNullOrEmpty(entity.Handle))
                 this.NumHandles = entity.AsignHandle(this.NumHandles);
-
-            // assign the owner
-            if (!isBlockEntity)
-            {
-                entity.Owner = this.layouts[this.activeLayout].AssociatedBlock;
-                this.layouts.References[this.activeLayout].Add(entity);
-            }
 
             // the entities that are part of a block do not belong to any of the entities lists but to the block definition.
             switch (entity.Type)
             {
                 case EntityType.Arc:
-                    if (!isBlockEntity)
-                        this.arcs.Add((Arc) entity);
                     break;
                 case EntityType.Circle:
-                    if (!isBlockEntity)
-                        this.circles.Add((Circle) entity);
                     break;
                 case EntityType.Dimension:
                     Dimension dim = (Dimension) entity;
                     dim.Style = this.dimStyles.Add(dim.Style, assignHandle);
                     this.dimStyles.References[dim.Style.Name].Add(dim);
-
-                    this.AddDimensionStyleOverrides(dim, assignHandle);
-
-                    // create the block that represent the dimension drawing
-                    Block dimBlock = dim.Block ?? dim.BuildBlock("*D" + this.DimensionBlocksIndex++);
-                    dim.Block = this.blocks.Add(dimBlock);
-                    this.blocks.References[dimBlock.Name].Add(dim);
-
+                    this.AddDimensionStyleOverridesReferencedDxfObjects(dim, dim.StyleOverrides, assignHandle);
+                    if (this.buildDimensionBlocks)
+                    {
+                        Block dimBlock = DimensionBlock.Build(dim, "DimBlock");
+                        dimBlock.SetName("*D" + ++this.DimensionBlocksIndex, false);
+                        dim.Block = this.blocks.Add(dimBlock);
+                        this.blocks.References[dimBlock.Name].Add(dim);
+                    }
+                    else if(dim.Block != null)
+                    {
+                        // if a block is present give it a proper name
+                        dim.Block.SetName("*D" + ++this.DimensionBlocksIndex, false);
+                        dim.Block = this.blocks.Add(dim.Block);
+                        this.blocks.References[dim.Block.Name].Add(dim);
+                    }
                     dim.DimensionStyleChanged += this.Dimension_DimStyleChanged;
                     dim.DimensionBlockChanged += this.Dimension_DimBlockChanged;
                     dim.DimensionStyleOverrideAdded += this.Dimension_DimStyleOverrideAdded;
                     dim.DimensionStyleOverrideRemoved += this.Dimension_DimStyleOverrideRemoved;
-
-                    if (!isBlockEntity)
-                        this.dimensions.Add(dim);
                     break;
                 case EntityType.Leader:
                     Leader leader = (Leader) entity;
                     leader.Style = this.dimStyles.Add(leader.Style, assignHandle);
                     this.dimStyles.References[leader.Style.Name].Add(leader);
                     leader.LeaderStyleChanged += this.Leader_DimStyleChanged;
-                    // add the annotation entity
-                    if (leader.Annotation != null)
-                        this.AddEntity(leader.Annotation, isBlockEntity, assignHandle);
-
-                    this.AddStyleOverrides(leader, assignHandle);
+                    this.AddDimensionStyleOverridesReferencedDxfObjects(leader, leader.StyleOverrides, assignHandle);
                     leader.DimensionStyleOverrideAdded += this.Leader_DimStyleOverrideAdded;
                     leader.DimensionStyleOverrideRemoved += this.Leader_DimStyleOverrideRemoved;
-
-                    if (!isBlockEntity)
-                        this.leaders.Add(leader);
+                    leader.AnnotationAdded += this.Leader_AnnotationAdded;
+                    leader.AnnotationRemoved += this.Leader_AnnotationRemoved;
                     break;
                 case EntityType.Tolerance:
                     Tolerance tol = (Tolerance) entity;
                     tol.Style = this.dimStyles.Add(tol.Style, assignHandle);
                     this.dimStyles.References[tol.Style.Name].Add(tol);
                     tol.ToleranceStyleChanged += this.Tolerance_DimStyleChanged;
-                    if (!isBlockEntity)
-                        this.tolerances.Add(tol);
                     break;
                 case EntityType.Ellipse:
-                    if (!isBlockEntity)
-                        this.ellipses.Add((Ellipse) entity);
                     break;
                 case EntityType.Face3D:
-                    if (!isBlockEntity)
-                        this.faces3d.Add((Face3d) entity);
                     break;
                 case EntityType.Spline:
-                    if (!isBlockEntity)
-                        this.splines.Add((Spline) entity);
                     break;
                 case EntityType.Hatch:
                     Hatch hatch = (Hatch) entity;
-
-                    // the boundary entities of an associative hatch that belong to a block will be handle by that block
-                    if (!isBlockEntity)
-                    {
-                        foreach (HatchBoundaryPath path in hatch.BoundaryPaths)
-                            this.Hatch_BoundaryPathAdded(hatch, new ObservableCollectionEventArgs<HatchBoundaryPath>(path));
-
-                        hatch.HatchBoundaryPathAdded += this.Hatch_BoundaryPathAdded;
-                        hatch.HatchBoundaryPathRemoved += this.Hatch_BoundaryPathRemoved;
-                        this.hatches.Add(hatch);
-                    }
+                    hatch.HatchBoundaryPathAdded += this.Hatch_BoundaryPathAdded;
+                    hatch.HatchBoundaryPathRemoved += this.Hatch_BoundaryPathRemoved;
                     break;
                 case EntityType.Insert:
                     Insert insert = (Insert) entity;
@@ -1255,56 +1183,42 @@ namespace netDxf
                     }
                     insert.AttributeAdded += this.Insert_AttributeAdded;
                     insert.AttributeRemoved += this.Insert_AttributeRemoved;
-                    if (!isBlockEntity)
-                        this.inserts.Add(insert);
                     break;
-                case EntityType.LightWeightPolyline:
-                    if (!isBlockEntity)
-                        this.lwPolylines.Add((LwPolyline) entity);
+                case EntityType.LwPolyline:
                     break;
                 case EntityType.Line:
-                    if (!isBlockEntity)
-                        this.lines.Add((Line) entity);
+                    break;
+                case EntityType.Shape:
+                    Shape shape = (Shape)entity;
+                    shape.Style = this.shapeStyles.Add(shape.Style, assignHandle);
+                    this.shapeStyles.References[shape.Style.Name].Add(shape);
+                    //check if the shape style contains a shape with the stored name
+                    if(!shape.Style.ContainsShapeName(shape.Name))
+                        throw new ArgumentException("The shape style does not contain a shape with the stored name.", nameof(entity));
                     break;
                 case EntityType.Point:
-                    if (!isBlockEntity)
-                        this.points.Add((Point) entity);
                     break;
                 case EntityType.PolyfaceMesh:
-                    if (!isBlockEntity)
-                        this.polyfaceMeshes.Add((PolyfaceMesh) entity);
                     break;
                 case EntityType.Polyline:
-                    if (!isBlockEntity)
-                        this.polylines.Add((Polyline) entity);
                     break;
                 case EntityType.Solid:
-                    if (!isBlockEntity)
-                        this.solids.Add((Solid) entity);
                     break;
                 case EntityType.Trace:
-                    if (!isBlockEntity)
-                        this.traces.Add((Trace) entity);
                     break;
                 case EntityType.Mesh:
-                    if (!isBlockEntity)
-                        this.meshes.Add((Mesh) entity);
                     break;
                 case EntityType.Text:
                     Text text = (Text) entity;
                     text.Style = this.textStyles.Add(text.Style, assignHandle);
                     this.textStyles.References[text.Style.Name].Add(text);
                     text.TextStyleChanged += this.Entity_TextStyleChanged;
-                    if (!isBlockEntity)
-                        this.texts.Add(text);
                     break;
                 case EntityType.MText:
                     MText mText = (MText) entity;
                     mText.Style = this.textStyles.Add(mText.Style, assignHandle);
                     this.textStyles.References[mText.Style.Name].Add(mText);
                     mText.TextStyleChanged += this.Entity_TextStyleChanged;
-                    if (!isBlockEntity)
-                        this.mTexts.Add(mText);
                     break;
                 case EntityType.Image:
                     Image image = (Image) entity;
@@ -1316,24 +1230,16 @@ namespace netDxf
                         this.NumHandles = reactor.AsignHandle(this.NumHandles);
                         image.Definition.Reactors.Add(image.Handle, reactor);
                     }
-                    if (!isBlockEntity)
-                        this.images.Add(image);
                     break;
                 case EntityType.MLine:
                     MLine mline = (MLine) entity;
                     mline.Style = this.mlineStyles.Add(mline.Style, assignHandle);
                     this.mlineStyles.References[mline.Style.Name].Add(mline);
                     mline.MLineStyleChanged += this.MLine_MLineStyleChanged;
-                    if (!isBlockEntity)
-                        this.mLines.Add(mline);
                     break;
                 case EntityType.Ray:
-                    if (!isBlockEntity)
-                        this.rays.Add((Ray) entity);
                     break;
                 case EntityType.XLine:
-                    if (!isBlockEntity)
-                        this.xlines.Add((XLine) entity);
                     break;
                 case EntityType.Underlay:
                     Underlay underlay = (Underlay) entity;
@@ -1352,36 +1258,16 @@ namespace netDxf
                             this.underlayPdfDefs.References[underlay.Definition.Name].Add(underlay);
                             break;
                     }
-                    if (!isBlockEntity)
-                        this.underlays.Add(underlay);
                     break;
                 case EntityType.Wipeout:
-                    if (!isBlockEntity)
-                        this.wipeouts.Add((Wipeout) entity);
                     break;
                 case EntityType.Viewport:
                     Viewport viewport = (Viewport) entity;
-                    if (viewport.ClippingBoundary != null)
-                        this.AddEntity(viewport.ClippingBoundary, isBlockEntity, assignHandle);
-                    if (!isBlockEntity)
-                        this.viewports.Add(viewport);
-                    break;
-                case EntityType.AttributeDefinition:
-                    AttributeDefinition attDef = (AttributeDefinition) entity;
-                    attDef.Style = this.textStyles.Add(attDef.Style, assignHandle);
-                    this.textStyles.References[attDef.Style.Name].Add(attDef);
-                    attDef.TextStyleChange += this.Entity_TextStyleChanged;
-                    if (!isBlockEntity)
-                        this.attributeDefinitions.Add(attDef);
+                    viewport.ClippingBoundaryAdded += this.Viewport_ClippingBoundaryAdded;
+                    viewport.ClippingBoundaryRemoved += this.Viewport_ClippingBoundaryRemoved;
                     break;
                 default:
                     throw new ArgumentException("The entity " + entity.Type + " is not implemented or unknown.");
-            }
-
-            foreach (string appReg in entity.XData.AppIds)
-            {
-                entity.XData[appReg].ApplicationRegistry = this.appRegistries.Add(entity.XData[appReg].ApplicationRegistry, assignHandle);
-                this.appRegistries.References[appReg].Add(entity);
             }
 
             entity.Layer = this.layers.Add(entity.Layer, assignHandle);
@@ -1394,16 +1280,271 @@ namespace netDxf
 
             entity.LayerChanged += this.Entity_LayerChanged;
             entity.LinetypeChanged += this.Entity_LinetypeChanged;
-            entity.XDataAddAppReg += this.Entity_XDataAddAppReg;
-            entity.XDataRemoveAppReg += this.Entity_XDataRemoveAppReg;
         }
 
-        private void RemoveDimensionStyleOverrides(DimensionStyleOverrideDictionary overrides, DxfObject entity)
+        internal void AddAttributeDefinitionToDocument(AttributeDefinition attDef, bool assignHandle)
+        {
+            // null entities are not allowed
+            if (attDef == null)
+                throw new ArgumentNullException(nameof(attDef));
+
+            // assign a handle
+            if (assignHandle || string.IsNullOrEmpty(attDef.Handle))
+                this.NumHandles = attDef.AsignHandle(this.NumHandles);
+
+            attDef.Style = this.textStyles.Add(attDef.Style, assignHandle);
+            this.textStyles.References[attDef.Style.Name].Add(attDef);
+            attDef.TextStyleChange += this.Entity_TextStyleChanged;
+
+            attDef.Layer = this.layers.Add(attDef.Layer, assignHandle);
+            this.layers.References[attDef.Layer.Name].Add(attDef);
+
+            attDef.Linetype = this.linetypes.Add(attDef.Linetype, assignHandle);
+            this.linetypes.References[attDef.Linetype.Name].Add(attDef);
+
+            this.AddedObjects.Add(attDef.Handle, attDef);
+
+            attDef.LayerChanged += this.Entity_LayerChanged;
+            attDef.LinetypeChanged += this.Entity_LinetypeChanged;
+
+        }
+
+        internal bool RemoveEntityFromDocument(EntityObject entity)
+        {
+            // the entities that are part of a block do not belong to any of the entities lists but to the block definition
+            // and they will not be removed from the drawing database
+            switch (entity.Type)
+            {
+                case EntityType.Arc:
+                    break;
+                case EntityType.Circle:
+                    break;
+                case EntityType.Dimension:
+                    Dimension dim = (Dimension) entity;
+                    this.blocks.References[dim.Block.Name].Remove(entity);
+                    dim.DimensionBlockChanged -= this.Dimension_DimBlockChanged;
+                    this.dimStyles.References[dim.Style.Name].Remove(entity);
+                    dim.DimensionStyleChanged -= this.Dimension_DimStyleChanged;
+                    dim.Block = null;
+                    this.RemoveDimensionStyleOverridesReferencedDxfObjects(dim, dim.StyleOverrides);
+                    dim.DimensionStyleOverrideAdded -= this.Dimension_DimStyleOverrideAdded;
+                    dim.DimensionStyleOverrideRemoved -= this.Dimension_DimStyleOverrideRemoved;
+                    break;
+                case EntityType.Leader:
+                    Leader leader = (Leader) entity;
+                    this.dimStyles.References[leader.Style.Name].Remove(entity);
+                    leader.LeaderStyleChanged -= this.Leader_DimStyleChanged;
+                    if (leader.Annotation != null)
+                    {
+                        leader.Annotation.RemoveReactor(leader);
+                        this.RemoveEntity(leader.Annotation);
+                    }
+                    this.RemoveDimensionStyleOverridesReferencedDxfObjects(leader, leader.StyleOverrides);
+                    leader.DimensionStyleOverrideAdded -= this.Leader_DimStyleOverrideAdded;
+                    leader.DimensionStyleOverrideRemoved -= this.Leader_DimStyleOverrideRemoved;
+                    leader.AnnotationAdded -= this.Leader_AnnotationAdded;
+                    leader.AnnotationRemoved -= this.Leader_AnnotationRemoved;
+                    break;
+                case EntityType.Tolerance:
+                    Tolerance tolerance = (Tolerance) entity;
+                    this.dimStyles.References[tolerance.Style.Name].Remove(entity);
+                    tolerance.ToleranceStyleChanged -= this.Tolerance_DimStyleChanged;
+                    break;
+                case EntityType.Ellipse:
+                    break;
+                case EntityType.Face3D:
+                    break;
+                case EntityType.Spline:
+                    break;
+                case EntityType.Hatch:
+                    Hatch hatch = (Hatch) entity;
+                    hatch.UnLinkBoundary(); // remove reactors, the entities that made the hatch boundary will not be automatically deleted                   
+                    hatch.HatchBoundaryPathAdded -= this.Hatch_BoundaryPathAdded;
+                    hatch.HatchBoundaryPathRemoved -= this.Hatch_BoundaryPathRemoved;
+                    break;
+                case EntityType.Insert:
+                    Insert insert = (Insert) entity;
+                    this.blocks.References[insert.Block.Name].Remove(entity);
+                    foreach (Attribute att in insert.Attributes)
+                    {
+                        this.layers.References[att.Layer.Name].Remove(att);
+                        att.LayerChanged -= this.Entity_LayerChanged;
+                        this.linetypes.References[att.Linetype.Name].Remove(att);
+                        att.LinetypeChanged -= this.Entity_LinetypeChanged;
+                        this.textStyles.References[att.Style.Name].Remove(att);
+                        att.TextStyleChanged -= this.Entity_TextStyleChanged;
+                    }
+                    insert.AttributeAdded -= this.Insert_AttributeAdded;
+                    insert.AttributeRemoved -= this.Insert_AttributeRemoved;
+                    break;
+                case EntityType.LwPolyline:
+                    break;
+                case EntityType.Line:
+                    break;
+                case EntityType.Shape:
+                    Shape shape = (Shape)entity;
+                    this.shapeStyles.References[shape.Style.Name].Remove(entity);
+                    break;
+                case EntityType.Point:
+                    break;
+                case EntityType.PolyfaceMesh:
+                    break;
+                case EntityType.Polyline:
+                    break;
+                case EntityType.Solid:
+                    break;
+                case EntityType.Trace:
+                    break;
+                case EntityType.Mesh:
+                    break;
+                case EntityType.Text:
+                    Text text = (Text) entity;
+                    this.textStyles.References[text.Style.Name].Remove(entity);
+                    text.TextStyleChanged -= this.Entity_TextStyleChanged;
+                    break;
+                case EntityType.MText:
+                    MText mText = (MText) entity;
+                    this.textStyles.References[mText.Style.Name].Remove(entity);
+                    mText.TextStyleChanged -= this.Entity_TextStyleChanged;
+                    break;
+                case EntityType.Image:
+                    Image image = (Image) entity;
+                    this.imageDefs.References[image.Definition.Name].Remove(image);
+                    image.Definition.Reactors.Remove(image.Handle);
+                    break;
+                case EntityType.MLine:
+                    MLine mline = (MLine) entity;
+                    this.mlineStyles.References[mline.Style.Name].Remove(entity);
+                    mline.MLineStyleChanged -= this.MLine_MLineStyleChanged;
+                    break;
+                case EntityType.Ray:
+                    break;
+                case EntityType.XLine:
+                    break;
+                case EntityType.Viewport:
+                    Viewport viewport = (Viewport) entity;
+                    // delete the viewport boundary entity in case there is one
+                    if (viewport.ClippingBoundary != null)
+                    {
+                        viewport.ClippingBoundary.RemoveReactor(viewport);
+                        this.RemoveEntity(viewport.ClippingBoundary);
+                    }
+                    viewport.ClippingBoundaryAdded -= this.Viewport_ClippingBoundaryAdded;
+                    viewport.ClippingBoundaryRemoved -= this.Viewport_ClippingBoundaryRemoved;
+
+                    break;
+                default:
+                    throw new ArgumentException("The entity " + entity.Type + " is not implemented or unknown");
+            }
+
+            this.layers.References[entity.Layer.Name].Remove(entity);
+            this.linetypes.References[entity.Linetype.Name].Remove(entity);
+            this.AddedObjects.Remove(entity.Handle);
+
+            entity.LayerChanged -= this.Entity_LayerChanged;
+            entity.LinetypeChanged -= this.Entity_LinetypeChanged;
+
+            entity.Handle = null;
+            entity.Owner = null;
+
+            return true;
+        }
+
+        internal bool RemoveAttributeDefinitionFromDocument(AttributeDefinition attDef)
+        {
+            this.textStyles.References[attDef.Style.Name].Remove(attDef);
+            attDef.TextStyleChange -= this.Entity_TextStyleChanged;
+
+            this.layers.References[attDef.Layer.Name].Remove(attDef);
+            this.linetypes.References[attDef.Linetype.Name].Remove(attDef);
+            this.AddedObjects.Remove(attDef.Handle);
+
+            attDef.LayerChanged -= this.Entity_LayerChanged;
+            attDef.LinetypeChanged -= this.Entity_LinetypeChanged;
+
+            attDef.Handle = null;
+            attDef.Owner = null;
+
+            return true;
+        }
+
+        #endregion
+
+        #region private methods
+
+        private void AddDimensionStyleOverridesReferencedDxfObjects(EntityObject entity, DimensionStyleOverrideDictionary overrides, bool assignHandle)
+        {
+            // add the style override referenced DxfObjects
+            DimensionStyleOverride styleOverride;
+
+            // add referenced text style
+            if (overrides.TryGetValue(DimensionStyleOverrideType.TextStyle, out styleOverride))
+            {
+                TextStyle dimtxtsty = (TextStyle) styleOverride.Value;
+                overrides[styleOverride.Type] = new DimensionStyleOverride(styleOverride.Type, this.textStyles.Add(dimtxtsty, assignHandle));
+                this.textStyles.References[dimtxtsty.Name].Add(entity);
+            }
+
+            // add referenced blocks
+            if (overrides.TryGetValue(DimensionStyleOverrideType.LeaderArrow, out styleOverride))
+            {
+                Block block = (Block) styleOverride.Value;
+                if (block != null)
+                {
+                    overrides[styleOverride.Type] = new DimensionStyleOverride(styleOverride.Type, this.blocks.Add(block, assignHandle));
+                    this.blocks.References[block.Name].Add(entity);
+                }
+            }
+
+            if (overrides.TryGetValue(DimensionStyleOverrideType.DimArrow1, out styleOverride))
+            {
+                Block block = (Block) styleOverride.Value;
+                if (block != null)
+                {
+                    overrides[styleOverride.Type] = new DimensionStyleOverride(styleOverride.Type, this.blocks.Add(block, assignHandle));
+                    this.blocks.References[block.Name].Add(entity);
+                }
+            }
+
+            if (overrides.TryGetValue(DimensionStyleOverrideType.DimArrow2, out styleOverride))
+            {
+                Block block = (Block) styleOverride.Value;
+                if (block != null)
+                {
+                    overrides[styleOverride.Type] = new DimensionStyleOverride(styleOverride.Type, this.blocks.Add(block, assignHandle));
+                    this.blocks.References[block.Name].Add(entity);
+                }
+            }
+
+            // add referenced line types
+            if (overrides.TryGetValue(DimensionStyleOverrideType.DimLineLinetype, out styleOverride))
+            {
+                Linetype linetype = (Linetype) styleOverride.Value;
+                overrides[styleOverride.Type] = new DimensionStyleOverride(styleOverride.Type, this.linetypes.Add(linetype, assignHandle));
+                this.linetypes.References[linetype.Name].Add(entity);
+            }
+
+            if (overrides.TryGetValue(DimensionStyleOverrideType.ExtLine1Linetype, out styleOverride))
+            {
+                Linetype linetype = (Linetype) styleOverride.Value;
+                overrides[styleOverride.Type] = new DimensionStyleOverride(styleOverride.Type, this.linetypes.Add(linetype, assignHandle));
+                this.linetypes.References[linetype.Name].Add(entity);
+            }
+
+            if (overrides.TryGetValue(DimensionStyleOverrideType.ExtLine2Linetype, out styleOverride))
+            {
+                Linetype linetype = (Linetype) styleOverride.Value;
+                overrides[styleOverride.Type] = new DimensionStyleOverride(styleOverride.Type, this.linetypes.Add(linetype, assignHandle));
+                this.linetypes.References[linetype.Name].Add(entity);
+            }
+        }
+
+        private void RemoveDimensionStyleOverridesReferencedDxfObjects(EntityObject entity, DimensionStyleOverrideDictionary overrides)
         {
             // remove the style override referenced DxfObjects
             DimensionStyleOverride styleOverride;
 
-            // add referenced text style
+            // remove referenced text style
             overrides.TryGetValue(DimensionStyleOverrideType.TextStyle, out styleOverride);
             if (styleOverride != null)
             {
@@ -1411,7 +1552,7 @@ namespace netDxf
                 this.textStyles.References[dimtxtsty.Name].Remove(entity);
             }
 
-            // add referenced blocks
+            // remove referenced blocks
             overrides.TryGetValue(DimensionStyleOverrideType.LeaderArrow, out styleOverride);
             if (styleOverride != null)
             {
@@ -1442,7 +1583,7 @@ namespace netDxf
                 }
             }
 
-            // add referenced line types
+            // remove referenced line types
             overrides.TryGetValue(DimensionStyleOverrideType.DimLineLinetype, out styleOverride);
             if (styleOverride != null)
             {
@@ -1465,224 +1606,6 @@ namespace netDxf
             }
         }
 
-        internal bool RemoveEntity(EntityObject entity, bool isBlockEntity)
-        {
-            if (entity == null)
-                return false;
-
-            if (entity.Handle == null)
-                return false;
-
-            if (entity.Owner == null)
-                return false;
-
-            if (entity.Reactors.Count > 0)
-                return false;
-
-            if (entity.Owner.Record.Layout == null)
-                return false;
-
-            if (!this.AddedObjects.ContainsKey(entity.Handle))
-                return false;
-
-            // the entities that are part of a block do not belong to any of the entities lists but to the block definition
-            // and they will not be removed from the drawing database
-            switch (entity.Type)
-            {
-                case EntityType.Arc:
-                    if (!isBlockEntity)
-                        this.arcs.Remove((Arc) entity);
-                    break;
-                case EntityType.Circle:
-                    if (!isBlockEntity)
-                        this.circles.Remove((Circle) entity);
-                    break;
-                case EntityType.Dimension:
-                    Dimension dim = (Dimension) entity;
-                    if (!isBlockEntity)
-                        this.dimensions.Remove(dim);
-                    this.blocks.References[dim.Block.Name].Remove(entity);
-                    dim.DimensionBlockChanged -= this.Dimension_DimBlockChanged;
-                    this.dimStyles.References[dim.Style.Name].Remove(entity);
-                    dim.DimensionStyleChanged -= this.Dimension_DimStyleChanged;
-                    dim.Block = null;
-
-                    this.RemoveDimensionStyleOverrides(dim.StyleOverrides, dim);
-                    dim.DimensionStyleOverrideAdded -= this.Dimension_DimStyleOverrideAdded;
-                    dim.DimensionStyleOverrideRemoved -= this.Dimension_DimStyleOverrideRemoved;
-
-                    break;
-                case EntityType.Leader:
-                    Leader leader = (Leader) entity;
-                    if (!isBlockEntity)
-                        this.leaders.Remove(leader);
-                    this.dimStyles.References[leader.Style.Name].Remove(entity);
-                    leader.LeaderStyleChanged -= this.Leader_DimStyleChanged;
-
-                    if (leader.Annotation != null)
-                        leader.Annotation.RemoveReactor(leader);
-
-                    this.RemoveDimensionStyleOverrides(leader.StyleOverrides, leader);
-                    leader.DimensionStyleOverrideAdded -= this.Leader_DimStyleOverrideAdded;
-                    leader.DimensionStyleOverrideRemoved -= this.Leader_DimStyleOverrideRemoved;
-                    break;
-                case EntityType.Tolerance:
-                    Tolerance tolerance = (Tolerance) entity;
-                    if (!isBlockEntity)
-                        this.tolerances.Remove(tolerance);
-                    this.dimStyles.References[tolerance.Style.Name].Remove(entity);
-                    tolerance.ToleranceStyleChanged -= this.Tolerance_DimStyleChanged;
-                    break;
-                case EntityType.Ellipse:
-                    if (!isBlockEntity)
-                        this.ellipses.Remove((Ellipse) entity);
-                    break;
-                case EntityType.Face3D:
-                    if (!isBlockEntity)
-                        this.faces3d.Remove((Face3d) entity);
-                    break;
-                case EntityType.Spline:
-                    if (!isBlockEntity)
-                        this.splines.Remove((Spline) entity);
-                    break;
-                case EntityType.Hatch:
-                    Hatch hatch = (Hatch) entity;
-                    hatch.UnLinkBoundary();
-                    if (!isBlockEntity)
-                    {
-                        hatch.HatchBoundaryPathAdded -= this.Hatch_BoundaryPathAdded;
-                        hatch.HatchBoundaryPathRemoved -= this.Hatch_BoundaryPathRemoved;
-                        this.hatches.Remove(hatch);
-                    }
-                    break;
-                case EntityType.Insert:
-                    Insert insert = (Insert) entity;
-                    if (!isBlockEntity)
-                        this.inserts.Remove(insert);
-                    this.blocks.References[insert.Block.Name].Remove(entity);
-                    foreach (Attribute att in insert.Attributes)
-                    {
-                        this.layers.References[att.Layer.Name].Remove(att);
-                        att.LayerChanged -= this.Entity_LayerChanged;
-                        this.linetypes.References[att.Linetype.Name].Remove(att);
-                        att.LinetypeChanged -= this.Entity_LinetypeChanged;
-                        this.textStyles.References[att.Style.Name].Remove(att);
-                        att.TextStyleChanged -= this.Entity_TextStyleChanged;
-                    }
-                    insert.AttributeAdded -= this.Insert_AttributeAdded;
-                    insert.AttributeRemoved -= this.Insert_AttributeRemoved;
-                    break;
-                case EntityType.LightWeightPolyline:
-                    if (!isBlockEntity)
-                        this.lwPolylines.Remove((LwPolyline) entity);
-                    break;
-                case EntityType.Line:
-                    if (!isBlockEntity)
-                        this.lines.Remove((Line) entity);
-                    break;
-                case EntityType.Point:
-                    if (!isBlockEntity)
-                        this.points.Remove((Point) entity);
-                    break;
-                case EntityType.PolyfaceMesh:
-                    if (!isBlockEntity)
-                        this.polyfaceMeshes.Remove((PolyfaceMesh) entity);
-                    break;
-                case EntityType.Polyline:
-                    if (!isBlockEntity)
-                        this.polylines.Remove((Polyline) entity);
-                    break;
-                case EntityType.Solid:
-                    if (!isBlockEntity)
-                        this.solids.Remove((Solid) entity);
-                    break;
-                case EntityType.Trace:
-                    if (!isBlockEntity)
-                        this.traces.Remove((Trace) entity);
-                    break;
-                case EntityType.Mesh:
-                    if (!isBlockEntity)
-                        this.meshes.Remove((Mesh) entity);
-                    break;
-                case EntityType.Text:
-                    Text text = (Text) entity;
-                    if (!isBlockEntity)
-                        this.texts.Remove(text);
-                    this.textStyles.References[text.Style.Name].Remove(entity);
-                    text.TextStyleChanged -= this.Entity_TextStyleChanged;
-                    break;
-                case EntityType.MText:
-                    MText mText = (MText) entity;
-                    if (!isBlockEntity)
-                        this.mTexts.Remove(mText);
-                    this.textStyles.References[mText.Style.Name].Remove(entity);
-                    mText.TextStyleChanged -= this.Entity_TextStyleChanged;
-                    break;
-                case EntityType.Image:
-                    Image image = (Image) entity;
-                    if (!isBlockEntity)
-                        this.images.Remove(image);
-                    this.imageDefs.References[image.Definition.Name].Remove(image);
-                    image.Definition.Reactors.Remove(image.Handle);
-                    break;
-                case EntityType.MLine:
-                    MLine mline = (MLine) entity;
-                    if (!isBlockEntity)
-                        this.mLines.Remove(mline);
-                    this.mlineStyles.References[mline.Style.Name].Remove(entity);
-                    mline.MLineStyleChanged -= this.MLine_MLineStyleChanged;
-                    break;
-                case EntityType.Ray:
-                    if (!isBlockEntity)
-                        this.rays.Remove((Ray) entity);
-                    break;
-                case EntityType.XLine:
-                    if (!isBlockEntity)
-                        this.xlines.Remove((XLine) entity);
-                    break;
-                case EntityType.Viewport:
-                    Viewport viewport = (Viewport) entity;
-                    if (!isBlockEntity)
-                        this.viewports.Remove(viewport);
-                    // delete the viewport boundary entity in case there is one
-                    if (viewport.ClippingBoundary != null)
-                    {
-                        viewport.ClippingBoundary.RemoveReactor(viewport);
-                        this.RemoveEntity(viewport.ClippingBoundary);
-                    }
-                    break;
-                case EntityType.AttributeDefinition:
-                    AttributeDefinition attDef = (AttributeDefinition) entity;
-                    if (!isBlockEntity)
-                        this.attributeDefinitions.Remove(attDef);
-                    this.textStyles.References[attDef.Style.Name].Remove(entity);
-                    break;
-                default:
-                    throw new ArgumentException("The entity " + entity.Type + " is not implemented or unknown");
-            }
-
-            if (!isBlockEntity)
-                this.layouts.References[entity.Owner.Record.Layout.Name].Remove(entity);
-
-            this.layers.References[entity.Layer.Name].Remove(entity);
-            this.linetypes.References[entity.Linetype.Name].Remove(entity);
-            foreach (string appReg in entity.XData.AppIds)
-            {
-                this.appRegistries.References[appReg].Remove(entity);
-            }
-            this.AddedObjects.Remove(entity.Handle);
-
-            entity.Handle = null;
-            entity.Owner = null;
-
-            entity.LayerChanged -= this.Entity_LayerChanged;
-            entity.LinetypeChanged -= this.Entity_LinetypeChanged;
-            entity.XDataAddAppReg -= this.Entity_XDataAddAppReg;
-            entity.XDataRemoveAppReg -= this.Entity_XDataRemoveAppReg;
-
-            return true;
-        }
-
         private void AddDefaultObjects()
         {
             // collections
@@ -1692,6 +1615,7 @@ namespace netDxf
             this.layers = new Layers(this);
             this.linetypes = new Linetypes(this);
             this.textStyles = new TextStyles(this);
+            this.shapeStyles = new ShapeStyles(this);
             this.dimStyles = new DimensionStyles(this);
             this.mlineStyles = new MLineStyles(this);
             this.ucss = new UCSs(this);
@@ -1755,11 +1679,18 @@ namespace netDxf
 
         private void Dimension_DimBlockChanged(Dimension sender, TableObjectChangedEventArgs<Block> e)
         {
-            this.blocks.References[e.OldValue.Name].Remove(sender);
-            this.blocks.Remove(e.OldValue);
+            if (e.OldValue != null)
+            {
+                this.blocks.References[e.OldValue.Name].Remove(sender);
+                this.blocks.Remove(e.OldValue);
+            }
 
-            e.NewValue = this.blocks.Add(e.NewValue);
-            this.blocks.References[e.NewValue.Name].Add(sender);
+            if (e.NewValue != null)
+            {
+                if(!e.NewValue.Name.StartsWith("*D")) e.NewValue.SetName("*D" + ++this.DimensionBlocksIndex, false);
+                e.NewValue = this.blocks.Add(e.NewValue);
+                this.blocks.References[e.NewValue.Name].Add(sender);
+            }
         }
 
         private void Dimension_DimStyleOverrideAdded(Dimension sender, DimensionStyleOverrideChangeEventArgs e)
@@ -1876,6 +1807,29 @@ namespace netDxf
             }
         }
 
+        private void Leader_AnnotationAdded(Leader sender, EntityChangeEventArgs e)
+        {
+            Layout layout = sender.Owner.Record.Layout;
+            // the viewport belongs to a layout
+            if (e.Item.Owner != null)
+            {
+                // the viewport clipping boundary and its entities must belong to the same document or block
+                if (!ReferenceEquals(e.Item.Owner.Record.Layout, layout))
+                    throw new ArgumentException("The leader annotation entity and the Leader entity must belong to the same layout and document. Clone it instead.");
+                // there is no need to do anything else we will not add the same entity twice
+            }
+            else
+            {
+                // we will add the new entity to the same document and layout of the hatch
+                this.blocks[layout.AssociatedBlock.Name].Entities.Add(e.Item);
+            }
+        }
+
+        private void Leader_AnnotationRemoved(Leader sender, EntityChangeEventArgs e)
+        {
+            this.RemoveEntity(e.Item);
+        }
+
         private void Tolerance_DimStyleChanged(Tolerance sender, TableObjectChangedEventArgs<DimensionStyle> e)
         {
             this.dimStyles.References[e.OldValue.Name].Remove(sender);
@@ -1906,17 +1860,6 @@ namespace netDxf
 
             e.NewValue = this.layers.Add(e.NewValue);
             this.layers.References[e.NewValue.Name].Add(sender);
-        }
-
-        void Entity_XDataAddAppReg(EntityObject sender, ObservableCollectionEventArgs<ApplicationRegistry> e)
-        {
-            sender.XData[e.Item.Name].ApplicationRegistry = this.appRegistries.Add(sender.XData[e.Item.Name].ApplicationRegistry);
-            this.appRegistries.References[e.Item.Name].Add(sender);
-        }
-
-        void Entity_XDataRemoveAppReg(EntityObject sender, ObservableCollectionEventArgs<ApplicationRegistry> e)
-        {
-            this.appRegistries.References[e.Item.Name].Remove(sender);
         }
 
         private void Insert_AttributeAdded(Insert sender, AttributeChangeEventArgs e)
@@ -1958,17 +1901,13 @@ namespace netDxf
                 {
                     // the hatch and its entities must belong to the same document or block
                     if (!ReferenceEquals(entity.Owner.Record.Layout, layout))
-                        throw new ArgumentException("The HatchBoundaryPath entity and the hatch must belong to the same layout and document. Clone it instead.");
+                        throw new ArgumentException("The HatchBoundaryPath entity and the Hatch entity must belong to the same layout and document. Clone it instead.");
                     // there is no need to do anything else we will not add the same entity twice
                 }
                 else
                 {
                     // we will add the new entity to the same document and layout of the hatch
-                    string active = this.ActiveLayout;
-                    this.ActiveLayout = layout.Name;
-                    // the entity does not belong to anyone
-                    this.AddEntity(entity, false, true);
-                    this.ActiveLayout = active;
+                    this.blocks[layout.AssociatedBlock.Name].Entities.Add(entity);
                 }
             }
         }
@@ -1979,6 +1918,82 @@ namespace netDxf
             {
                 this.RemoveEntity(entity);
             }
+        }
+
+        private void Viewport_ClippingBoundaryAdded(Viewport sender, EntityChangeEventArgs e)
+        {
+            Layout layout = sender.Owner.Record.Layout;
+            // the viewport belongs to a layout
+            if (e.Item.Owner != null)
+            {
+                // the viewport clipping boundary and its entities must belong to the same document or block
+                if (!ReferenceEquals(e.Item.Owner.Record.Layout, layout))
+                    throw new ArgumentException("The viewport clipping boundary entity and the Viewport entity must belong to the same layout and document. Clone it instead.");
+                // there is no need to do anything else we will not add the same entity twice
+            }
+            else
+            {
+                // we will add the new entity to the same document and layout of the hatch
+                this.blocks[layout.AssociatedBlock.Name].Entities.Add(e.Item);
+            }
+        }
+
+        private void Viewport_ClippingBoundaryRemoved(Viewport sender, EntityChangeEventArgs e)
+        {
+            this.RemoveEntity(e.Item);
+        }
+
+        #endregion
+
+        #region IHasXData events
+
+        private void AddedObjects_BeforeAddItem(ObservableDictionary<string, DxfObject> sender, ObservableDictionaryEventArgs<string, DxfObject> e)
+        {
+        }
+
+        private void AddedObjects_AddItem(ObservableDictionary<string, DxfObject> sender, ObservableDictionaryEventArgs<string, DxfObject> e)
+        {
+            IHasXData o = e.Item.Value as IHasXData;
+            if (o != null)
+            {
+                foreach (string appReg in o.XData.AppIds)
+                {
+                    o.XData[appReg].ApplicationRegistry = this.appRegistries.Add(o.XData[appReg].ApplicationRegistry);
+                    this.appRegistries.References[appReg].Add(e.Item.Value);
+                }
+
+                o.XDataAddAppReg += this.IHasXData_XDataAddAppReg;
+                o.XDataRemoveAppReg += this.IHasXData_XDataRemoveAppReg;
+            }
+        }
+
+        private void AddedObjects_BeforeRemoveItem(ObservableDictionary<string, DxfObject> sender, ObservableDictionaryEventArgs<string, DxfObject> e)
+        {           
+        }
+
+        private void AddedObjects_RemoveItem(ObservableDictionary<string, DxfObject> sender, ObservableDictionaryEventArgs<string, DxfObject> e)
+        {
+            IHasXData o = e.Item.Value as IHasXData;
+            if (o != null)
+            {
+                foreach (string appReg in o.XData.AppIds)
+                {
+                    this.appRegistries.References[appReg].Remove(e.Item.Value);
+                }
+                o.XDataAddAppReg -= this.IHasXData_XDataAddAppReg;
+                o.XDataRemoveAppReg -= this.IHasXData_XDataRemoveAppReg;
+            }
+        }
+
+        private void IHasXData_XDataAddAppReg(IHasXData sender, ObservableCollectionEventArgs<ApplicationRegistry> e)
+        {
+            sender.XData[e.Item.Name].ApplicationRegistry = this.appRegistries.Add(sender.XData[e.Item.Name].ApplicationRegistry);
+            this.appRegistries.References[e.Item.Name].Add(sender as DxfObject);
+        }
+
+        private void IHasXData_XDataRemoveAppReg(IHasXData sender, ObservableCollectionEventArgs<ApplicationRegistry> e)
+        {
+            this.appRegistries.References[e.Item.Name].Remove(sender as DxfObject);
         }
 
         #endregion

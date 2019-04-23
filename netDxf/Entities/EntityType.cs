@@ -1,7 +1,7 @@
-﻿#region netDxf library, Copyright (C) 2009-2016 Daniel Carvajal (haplokuon@gmail.com)
+﻿#region netDxf library, Copyright (C) 2009-2019 Daniel Carvajal (haplokuon@gmail.com)
 
 //                        netDxf library
-// Copyright (C) 2009-2016 Daniel Carvajal (haplokuon@gmail.com)
+// Copyright (C) 2009-2019 Daniel Carvajal (haplokuon@gmail.com)
 // 
 // This library is free software; you can redistribute it and/or
 // modify it under the terms of the GNU Lesser General Public
@@ -31,11 +31,6 @@ namespace netDxf.Entities
         /// Arc entity.
         /// </summary>
         Arc,
-
-        /// <summary>
-        /// Attribute definition entity.
-        /// </summary>
-        AttributeDefinition,
 
         /// <summary>
         /// Circle entity.
@@ -78,9 +73,9 @@ namespace netDxf.Entities
         Leader,
 
         /// <summary>
-        /// Lightweight polyline entity.
+        /// LwPolyline entity, aka lightweight polyline.
         /// </summary>
-        LightWeightPolyline,
+        LwPolyline,
 
         /// <summary>
         /// Line entity.
@@ -121,6 +116,11 @@ namespace netDxf.Entities
         /// Ray entity.
         /// </summary>
         Ray,
+
+        /// <summary>
+        /// Shape entity.
+        /// </summary>
+        Shape,
 
         /// <summary>
         /// Solid entity.

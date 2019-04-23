@@ -1,7 +1,7 @@
-#region netDxf library, Copyright (C) 2009-2016 Daniel Carvajal (haplokuon@gmail.com)
+#region netDxf library, Copyright (C) 2009-2018 Daniel Carvajal (haplokuon@gmail.com)
 
 //                        netDxf library
-// Copyright (C) 2009-2016 Daniel Carvajal (haplokuon@gmail.com)
+// Copyright (C) 2009-2018 Daniel Carvajal (haplokuon@gmail.com)
 // 
 // This library is free software; you can redistribute it and/or
 // modify it under the terms of the GNU Lesser General Public
@@ -42,24 +42,56 @@ namespace netDxf.Collections
     {
         #region constructor
 
-        internal Layouts(DxfDocument document, string handle = null)
-            : this(document, 0, handle)
+        internal Layouts(DxfDocument document)
+            : this(document, null)
         {
         }
 
-        internal Layouts(DxfDocument document, int capacity, string handle = null)
-            : base(document,
-                new Dictionary<string, Layout>(capacity, StringComparer.OrdinalIgnoreCase),
-                new Dictionary<string, List<DxfObject>>(capacity, StringComparer.OrdinalIgnoreCase),
-                DxfObjectCode.LayoutDictionary,
-                handle)
+        internal Layouts(DxfDocument document, string handle)
+            : base(document, DxfObjectCode.LayoutDictionary, handle)
         {
             this.MaxCapacity = short.MaxValue;
+            this.references = null;
         }
 
         #endregion
 
         #region override methods
+
+        /// <summary>
+        /// Gets the <see cref="DxfObject">dxf objects</see> referenced by a T.
+        /// </summary>
+        /// <param name="name">Table object name.</param>
+        /// <returns>The list of DxfObjects that reference the specified table object.</returns>
+        /// <remarks>
+        /// If there is no table object with the specified name in the list the method an empty list.<br />
+        /// The Groups collection method GetReferences will always return an empty list since there are no DxfObjects that references them.
+        /// </remarks>
+        public new List<DxfObject> GetReferences(string name)
+        {
+            if (!this.Contains(name))
+                return new List<DxfObject>();
+            return this.GetReferences(this[name]);
+        }
+
+        /// <summary>
+        /// Gets the <see cref="DxfObject">dxf objects</see> referenced by a T.
+        /// </summary>
+        /// <param name="item">Table object.</param>
+        /// <returns>The list of DxfObjects that reference the specified table object.</returns>
+        /// <remarks>
+        /// If there is no table object with the specified name in the list the method an empty list.<br />
+        /// The Groups collection method GetReferences will always return an empty list since there are no DxfObjects that references them.
+        /// </remarks>
+        public new List<DxfObject> GetReferences(Layout item)
+        {
+            if (item == null)
+                throw new ArgumentNullException(nameof(item));
+            List<DxfObject> refs = new List<DxfObject>();
+            refs.AddRange(item.AssociatedBlock.Entities);
+            refs.AddRange(item.AssociatedBlock.AttributeDefinitions.Values);
+            return refs;
+        }
 
         /// <summary>
         /// Adds a layout to the list.
@@ -90,7 +122,7 @@ namespace netDxf.Collections
             {
                 // the PaperSpace block names follow the naming Paper_Space, Paper_Space0, Paper_Space1, ...
                 string spaceName = this.list.Count == 1 ? Block.DefaultPaperSpaceName : string.Concat(Block.DefaultPaperSpaceName, this.list.Count - 2);
-                associatadBlock = new Block(spaceName, false, null, null);
+                associatadBlock = new Block(spaceName, null, null, false);
                 if (layout.TabOrder == 0)
                     layout.TabOrder = (short) this.list.Count;
             }
@@ -107,12 +139,11 @@ namespace netDxf.Collections
             if (assignHandle || string.IsNullOrEmpty(layout.Handle))
                 this.Owner.NumHandles = layout.AsignHandle(this.Owner.NumHandles);
 
-            this.Owner.AddedObjects.Add(layout.Handle, layout);
-
             this.list.Add(layout.Name, layout);
-            this.references.Add(layout.Name, new List<DxfObject>());
 
             layout.NameChanged += this.Item_NameChanged;
+
+            this.Owner.AddedObjects.Add(layout.Handle, layout);
 
             return layout;
         }
@@ -190,7 +221,7 @@ namespace netDxf.Collections
                 if (l.IsPaperSpace)
                 {
                     string spaceName = index == 0 ? Block.PaperSpace.Name : string.Concat(Block.PaperSpace.Name, index - 1);
-                    Block associatadBlock = this.Owner.Blocks.Add(new Block(spaceName, false, null, null));
+                    Block associatadBlock = this.Owner.Blocks.Add(new Block(spaceName, null, null, false));
                     this.Owner.Blocks.References[associatadBlock.Name].Add(l);
                     l.AssociatedBlock = associatadBlock;
                     associatadBlock.Record.Layout = l;

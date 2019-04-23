@@ -1,7 +1,7 @@
-﻿#region netDxf library, Copyright (C) 2009-2016 Daniel Carvajal (haplokuon@gmail.com)
+﻿#region netDxf library, Copyright (C) 2009-2018 Daniel Carvajal (haplokuon@gmail.com)
 
 //                        netDxf library
-// Copyright (C) 2009-2016 Daniel Carvajal (haplokuon@gmail.com)
+// Copyright (C) 2009-2018 Daniel Carvajal (haplokuon@gmail.com)
 // 
 // This library is free software; you can redistribute it and/or
 // modify it under the terms of the GNU Lesser General Public
@@ -198,7 +198,7 @@ namespace netDxf.Tables
         }
 
         /// <summary>
-        /// Gets the owner of the actual dxf object.
+        /// Gets the owner of the actual viewport.
         /// </summary>
         public new VPorts Owner
         {
@@ -217,7 +217,7 @@ namespace netDxf.Tables
         /// <returns>A new VPort that is a copy of this instance.</returns>
         public override TableObject Clone(string newName)
         {
-            return new VPort(newName)
+            VPort copy = new VPort(newName)
             {
                 ViewCenter = this.center,
                 SnapBasePoint = this.snapBasePoint,
@@ -229,6 +229,11 @@ namespace netDxf.Tables
                 ViewAspectRatio = this.aspectRatio,
                 ShowGrid = this.showGrid
             };
+
+            foreach (XData data in this.XData.Values)
+                copy.XData.Add((XData)data.Clone());
+
+            return copy;
         }
 
         /// <summary>

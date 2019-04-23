@@ -1,7 +1,7 @@
-﻿#region netDxf library, Copyright (C) 2009-2016 Daniel Carvajal (haplokuon@gmail.com)
+﻿#region netDxf library, Copyright (C) 2009-2018 Daniel Carvajal (haplokuon@gmail.com)
 
 //                        netDxf library
-// Copyright (C) 2009-2016 Daniel Carvajal (haplokuon@gmail.com)
+// Copyright (C) 2009-2018 Daniel Carvajal (haplokuon@gmail.com)
 // 
 // This library is free software; you can redistribute it and/or
 // modify it under the terms of the GNU Lesser General Public
@@ -207,7 +207,7 @@ namespace netDxf.Tables
         }
 
         /// <summary>
-        /// Gets the owner of the actual dxf object.
+        /// Gets the owner of the actual layer.
         /// </summary>
         public new Layers Owner
         {
@@ -226,7 +226,7 @@ namespace netDxf.Tables
         /// <returns>A new Layer that is a copy of this instance.</returns>
         public override TableObject Clone(string newName)
         {
-            return new Layer(newName)
+            Layer copy = new Layer(newName)
             {
                 Color = (AciColor) this.Color.Clone(),
                 IsVisible = this.isVisible,
@@ -237,6 +237,11 @@ namespace netDxf.Tables
                 Lineweight = this.Lineweight,
                 Transparency = (Transparency) this.Transparency.Clone()
             };
+
+            foreach (XData data in this.XData.Values)
+                copy.XData.Add((XData)data.Clone());
+
+            return copy;
         }
 
         /// <summary>
